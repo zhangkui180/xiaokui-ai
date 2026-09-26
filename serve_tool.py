@@ -336,7 +336,7 @@ PAGE = r"""<!DOCTYPE html>
   @media (max-width:979px) {
     .layout.picked { display:flex; flex-direction:column; }
     .layout.picked .detail { order:-1; scroll-margin-top:120px; }
-    svg.kline { min-height:220px; }
+    svg.kline { min-height:280px; }
   }
   @media (min-width:980px) {
     .layout { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); align-items:start; }
@@ -404,6 +404,9 @@ PAGE = r"""<!DOCTYPE html>
     header, main { padding-left:14px; padding-right:14px; }
     .metrics { grid-template-columns:repeat(2, minmax(0,1fr)); }
     .kline-cols { flex-direction:column; gap:4px; }
+  }
+  @media (max-width:979px) {
+    .kline-tip { position:static; width:auto; max-width:none; margin:6px 2px 2px; box-shadow:none; }
   }
 </style>
 </head>
@@ -530,7 +533,7 @@ function paintChart() {
   const count = Math.min(CHART_VISIBLE, chartBars.length);
   clampChartStart();
   const bars = chartBars.slice(chartStart, chartStart + count);
-  const w = 640, priceH = 148, volH = 56, gap = 14, padX = 6, padY = 8;
+  const w = 640, priceH = 148, volH = window.innerWidth < 980 ? 112 : 56, gap = 14, padX = 6, padY = 8;
   const h = padY + priceH + gap + volH + 6;
   const slot = (w - padX * 2) / bars.length;
   const bw = Math.max(1.2, slot * 0.62);
@@ -637,29 +640,46 @@ function hideBar() {
   if (vline) vline.setAttribute("visibility", "hidden");
   if (hline) hline.setAttribute("visibility", "hidden");
 }
+function barIndexAt(svg, clientX) {
+  const rect = svg.getBoundingClientRect();
+  const w = Number(svg.dataset.w), padX = Number(svg.dataset.padx);
+  const count = Number(svg.dataset.count) || 1;
+  const x = (clientX - rect.left) / rect.width * w;
+  const slot = (w - padX * 2) / count;
+  return (Number(svg.dataset.start) || 0) + Math.floor((x - padX) / slot);
+}
 function bindKline() {
   const svg = document.getElementById("kline-svg");
   if (!svg || !chartBars.length || svg.dataset.bound) return;
   svg.dataset.bound = "1";
   let drag = null;
+  let tipHold = false;
+  const hideTip = () => { tipHold = false; hideBar(); };
   svg.addEventListener("pointerdown", ev => {
     if (ev.button !== 0) return;
-    svg.setPointerCapture(ev.pointerId);
-    drag = { x: ev.clientX, start: chartStart, moved: false };
-    svg.classList.add("dragging");
+    try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    drag = { x: ev.clientX, start: chartStart, moved: false, touch: ev.pointerType === "touch" };
+    if (drag.touch) {
+      tipHold = true;
+      showBar(barIndexAt(svg, ev.clientX));
+    } else {
+      tipHold = false;
+      svg.classList.add("dragging");
+    }
   });
   svg.addEventListener("pointermove", ev => {
     if (!drag) {
-      const rect = svg.getBoundingClientRect();
-      const w = Number(svg.dataset.w), padX = Number(svg.dataset.padx);
-      const count = Number(svg.dataset.count) || 1;
-      const x = (ev.clientX - rect.left) / rect.width * w;
-      const slot = (w - padX * 2) / count;
-      showBar((Number(svg.dataset.start) || 0) + Math.floor((x - padX) / slot));
+      showBar(barIndexAt(svg, ev.clientX));
       return;
     }
     const dx = ev.clientX - drag.x;
-    if (Math.abs(dx) > 4) drag.moved = true;
+    if (Math.abs(dx) > (drag.touch ? 14 : 4)) drag.moved = true;
+    if (!drag.moved) {
+      if (drag.touch) showBar(barIndexAt(svg, ev.clientX));
+      return;
+    }
+    svg.classList.add("dragging");
+    hideTip();
     const rect = svg.getBoundingClientRect();
     const count = Number(svg.dataset.count) || 1;
     const next = drag.start - Math.round(dx / (rect.width / count));
@@ -667,17 +687,22 @@ function bindKline() {
     const clamped = Math.max(0, Math.min(next, chartBars.length - countFit));
     if (clamped !== chartStart) {
       chartStart = clamped;
-      hideBar();
       paintChart();
     }
   });
-  const endDrag = () => {
+  const endDrag = ev => {
+    if (drag && drag.touch && !drag.moved) {
+      tipHold = true;
+      showBar(barIndexAt(svg, ev.clientX));
+    } else {
+      tipHold = false;
+    }
     drag = null;
     svg.classList.remove("dragging");
   };
   svg.addEventListener("pointerup", endDrag);
-  svg.addEventListener("pointercancel", endDrag);
-  svg.addEventListener("pointerleave", () => { if (!drag) hideBar(); });
+  svg.addEventListener("pointercancel", () => { hideTip(); drag = null; svg.classList.remove("dragging"); });
+  svg.addEventListener("pointerleave", () => { if (!drag && !tipHold) hideBar(); });
   svg.addEventListener("wheel", ev => {
     ev.preventDefault();
     const countFit = Math.min(CHART_VISIBLE, chartBars.length);
