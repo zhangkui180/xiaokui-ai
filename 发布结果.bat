@@ -7,8 +7,8 @@ if not exist web\results.json (
   exit /b 1
 )
 if not exist docs mkdir docs
-copy /Y web\results.json docs\results.json >nul
-git add web\results.json docs\results.json
+"C:\Users\37090\AppData\Local\Programs\Python\Python312\python.exe" -c "import serve_tool; serve_tool.sync_pages()"
+git add web/results.json docs/results.json docs/index.html docs/bars
 git diff --cached --quiet
 if errorlevel 1 (
   git -c user.name=zhangkui180 -c user.email=58655214+zhangkui180@users.noreply.github.com commit -m "更新已发布的筛选结果"

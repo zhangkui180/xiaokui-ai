@@ -211,6 +211,58 @@ def load_history(code: str, fallback: pd.DataFrame) -> pd.DataFrame:
     return fallback
 
 
+def _num(value, digits: int = 2):
+    if pd.isna(value):
+        return None
+    return round(float(value), digits)
+
+
+def chart_bars(frame: pd.DataFrame) -> list[dict]:
+    close_s = pd.to_numeric(frame["close"], errors="coerce")
+    prev_s = close_s.shift(1)
+    ma_s = {n: close_s.rolling(n).mean() for n in (5, 10, 20, 40, 160)}
+    dif_s = close_s.ewm(span=12, adjust=False).mean() - close_s.ewm(span=26, adjust=False).mean()
+    dea_s = dif_s.ewm(span=9, adjust=False).mean()
+    bars = []
+    for i in range(len(frame)):
+        row = frame.iloc[i]
+        close = float(row.close)
+        volume = float(row.volume)
+        bars.append(
+            {
+                "date": str(row.date)[:10],
+                "open": _num(row.open),
+                "high": _num(row.high),
+                "low": _num(row.low),
+                "close": _num(close),
+                "prev": _num(prev_s.iloc[i]),
+                "volume": round(volume),
+                "amount": round(volume * close),
+                "ma5": _num(ma_s[5].iloc[i]),
+                "ma10": _num(ma_s[10].iloc[i]),
+                "ma20": _num(ma_s[20].iloc[i]),
+                "ma40": _num(ma_s[40].iloc[i]),
+                "ma160": _num(ma_s[160].iloc[i]),
+                "dif": _num(dif_s.iloc[i], 3),
+                "dea": _num(dea_s.iloc[i], 3),
+            }
+        )
+    return bars
+
+
+def kline_frame(code: str) -> pd.DataFrame | None:
+    """公开页用本地已有日线。有更长的历史文件就用历史文件。"""
+    paths = [CACHE / f"{code}.csv", CACHE / f"{code}.hist.csv"]
+    chosen: pd.DataFrame | None = None
+    for path in paths:
+        if not path.exists():
+            continue
+        frame = pd.read_csv(path).drop_duplicates("date").sort_values("date")
+        if chosen is None or len(frame) > len(chosen):
+            chosen = frame
+    return chosen
+
+
 def stock_detail(code: str) -> dict:
     code = "".join(ch for ch in code if ch.isdigit())[:6]
     if code.startswith("688"):
@@ -223,41 +275,7 @@ def stock_detail(code: str) -> dict:
     last = scored.iloc[-1]
     prev = float(scored["close"].iloc[-2]) if len(scored) > 1 else float(last["close"])
     price = float(last["close"])
-    close_s = pd.to_numeric(scored["close"], errors="coerce")
-    prev_s = close_s.shift(1)
-    ma_s = {n: close_s.rolling(n).mean() for n in (5, 10, 20, 40, 160)}
-    dif_s = close_s.ewm(span=12, adjust=False).mean() - close_s.ewm(span=26, adjust=False).mean()
-    dea_s = dif_s.ewm(span=9, adjust=False).mean()
-    bars = []
-    for i in range(len(scored)):
-        row = scored.iloc[i]
-        close = float(row.close)
-        volume = float(row.volume)
-
-        def num(value, digits: int = 2):
-            if pd.isna(value):
-                return None
-            return round(float(value), digits)
-
-        bars.append(
-            {
-                "date": str(row.date)[:10],
-                "open": num(row.open),
-                "high": num(row.high),
-                "low": num(row.low),
-                "close": num(close),
-                "prev": num(prev_s.iloc[i]),
-                "volume": round(volume),
-                "amount": round(volume * close),
-                "ma5": num(ma_s[5].iloc[i]),
-                "ma10": num(ma_s[10].iloc[i]),
-                "ma20": num(ma_s[20].iloc[i]),
-                "ma40": num(ma_s[40].iloc[i]),
-                "ma160": num(ma_s[160].iloc[i]),
-                "dif": num(dif_s.iloc[i], 3),
-                "dea": num(dea_s.iloc[i], 3),
-            }
-        )
+    bars = chart_bars(scored)
     flags = []
     for key, label, text in FLAGS:
         flags.append({"key": key, "label": label, "text": text, "on": bool(last[key])})
@@ -662,7 +680,7 @@ function bindKline() {
   }, { passive: false });
   hideBar();
 }
-function showPublishedDetail(row) {
+async function showPublishedDetail(row) {
   const pct = Number(row.pct);
   const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
   const sign = pct > 0 ? "+" : "";
@@ -677,9 +695,23 @@ function showPublishedDetail(row) {
       <div><span>止损参考</span><b>${row.stop == null ? "—" : Number(row.stop).toFixed(2)}</b></div>
       <div><span>2:1 目标</span><b>${row.target == null ? "—" : Number(row.target).toFixed(2)}</b></div>
     </div>
+    <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div></div>
+    <div id="kline-cap" class="muted kline-cap">正在读取日K…</div>
     <div class="tags">${tags}</div>
-    ${soe}
-    <p class="muted">日K和完整规则对照，要在自己电脑上打开工具才能看。</p>`;
+    ${soe}`;
+  chartBars = [];
+  try {
+    const res = await fetch("bars/" + encodeURIComponent(row.code) + ".json");
+    if (res.ok) chartBars = await res.json();
+  } catch (e) {}
+  if (!chartBars.length) {
+    const capEl = document.getElementById("kline-cap");
+    if (capEl) capEl.textContent = "这只股票的日K还没发布。";
+    return;
+  }
+  chartStart = Math.max(0, chartBars.length - CHART_VISIBLE);
+  paintChart();
+  bindKline();
 }
 async function openDetail(code, name) {
   selected = code;
@@ -687,7 +719,7 @@ async function openDetail(code, name) {
   if (!localTool) {
     const row = board.rows.find(r => r.code === code);
     if (!row) { detailEl.innerHTML = `<p>没有数据</p>`; return; }
-    showPublishedDetail(row);
+    await showPublishedDetail(row);
     if (window.innerWidth < 980) detailEl.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
@@ -873,13 +905,32 @@ class Handler(BaseHTTPRequestHandler):
         print(f"{self.address_string()} {fmt % args}", flush=True)
 
 
+def export_published_bars(rows: list[dict]) -> None:
+    folder = DOCS / "bars"
+    folder.mkdir(exist_ok=True)
+    keep: set[str] = set()
+    for row in rows:
+        code = "".join(ch for ch in str(row.get("code") or "") if ch.isdigit())[:6]
+        frame = kline_frame(code) if len(code) == 6 else None
+        if frame is None or len(frame) < 2:
+            continue
+        body = json.dumps(chart_bars(frame), ensure_ascii=False, separators=(",", ":"))
+        (folder / f"{code}.json").write_text(body, encoding="utf-8")
+        keep.add(code)
+    for old in folder.glob("*.json"):
+        if old.stem not in keep:
+            old.unlink()
+
+
 def sync_pages() -> None:
-    """把当前页面和筛选结果写到 docs，供公开网页读取。"""
+    """把当前页面、筛选结果和日K写到 docs，供公开网页读取。"""
     DOCS.mkdir(exist_ok=True)
     (DOCS / "index.html").write_text(PAGE, encoding="utf-8")
     src = WEB / "results.json"
     if src.exists():
-        (DOCS / "results.json").write_text(src.read_text(encoding="utf-8"), encoding="utf-8")
+        text = src.read_text(encoding="utf-8")
+        (DOCS / "results.json").write_text(text, encoding="utf-8")
+        export_published_bars(json.loads(text).get("rows") or [])
 
 
 def main() -> None:
