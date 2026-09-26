@@ -452,21 +452,11 @@ function bindKline() {
   });
   const endPointer = ev => {
     const wasPinch = !!pinch;
+    const touched = drag && drag.touch;
     pts.delete(ev.pointerId);
     if (pts.size < 2) pinch = null;
-    if (wasPinch) {
-      drag = null;
-      svg.classList.remove("dragging");
-      return;
-    }
-    if (drag && drag.touch && !drag.moved) {
-      tipHold = true;
-      showBar(barIndexAt(svg, ev.clientX));
-    } else if (ev.type !== "pointercancel") {
-      tipHold = false;
-    } else {
-      hideTip();
-    }
+    if (wasPinch || touched || ev.type === "pointercancel") hideTip();
+    else tipHold = false;
     drag = null;
     svg.classList.remove("dragging");
   };
