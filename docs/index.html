@@ -176,6 +176,8 @@ const countEl = document.getElementById("count");
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function shown() {
   return board.rows.filter(r => {
+    const name = String(r.name || "");
+    if (r.st || name.toUpperCase().includes("ST") || name.includes("退")) return false;
     if (soeOnly) return !!soeDeals[r.code];
     if (hotOnly) return coreTags(r).length >= 2;
     return prefix === "all" || r.prefix === prefix;

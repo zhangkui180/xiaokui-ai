@@ -97,6 +97,12 @@ def fetch_universe() -> list[dict]:
     return rows
 
 
+def is_exchange_risk(name: str) -> bool:
+    """交易所用简称标风险：*ST / ST 是退市风险或其他风险警示，退是退市整理。立案后被警示的也会改成 ST。"""
+    text = str(name or "")
+    return ("ST" in text.upper()) or ("退" in text)
+
+
 def _symbol(code: str) -> str:
     return ("sh" if code.startswith("6") else "sz") + code
 
@@ -172,7 +178,7 @@ def evaluate(stock: dict, force: bool = False) -> dict | None:
         "tags": tags,
         "stop": None if pd.isna(last["stop_ref"]) else round(float(last["stop_ref"]), 2),
         "target": None if pd.isna(last["target_2r"]) else round(float(last["target_2r"]), 2),
-        "st": ("ST" in stock["name"].upper()) or ("退" in stock["name"]),
+        "st": is_exchange_risk(stock["name"]),
     }
 
 
@@ -347,7 +353,7 @@ def scan_market(force: bool = False, on_progress=None) -> dict:
                 row = None
             if row:
                 dates.append(row["date"])
-            if row and row["entry"]:
+            if row and row["entry"] and not row["st"]:
                 matches.append(row)
             if on_progress:
                 on_progress({"phase": "scan", "done": done, "total": len(universe), "hits": len(matches), "failed": failed})

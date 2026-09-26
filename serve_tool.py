@@ -22,7 +22,7 @@ PORT = 8771
 
 sys.path.insert(0, str(ROOT))
 from joy_factor import joy_factor
-from screen_market import scan_market
+from screen_market import is_exchange_risk, scan_market
 
 FLAGS = [
     ("tide", "大级别向上", "收盘站上 160 日线，并且 160 日线在抬头"),
@@ -161,8 +161,16 @@ def load_board() -> dict:
 
 
 def _without_star(data: dict) -> dict:
-    """688 开头是科创板，不放进列表，扫描数字里也不再计入。"""
-    rows = [row for row in data.get("rows") or [] if not str(row.get("code") or "").startswith("688")]
+    """688 开头是科创板，不放进列表，扫描数字里也不再计入。
+    简称带 ST、*ST 或退的是退市风险、立案后的风险警示，也不进名单。"""
+    rows = []
+    for row in data.get("rows") or []:
+        code = str(row.get("code") or "")
+        if code.startswith("688"):
+            continue
+        if row.get("st") or is_exchange_risk(row.get("name")):
+            continue
+        rows.append(row)
     meta = dict(data.get("meta") or {})
     counts = dict(meta.get("counts") or {})
     star_n = sum(1 for _ in CACHE.glob("688*.csv"))
@@ -474,6 +482,8 @@ const countEl = document.getElementById("count");
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function shown() {
   return board.rows.filter(r => {
+    const name = String(r.name || "");
+    if (r.st || name.toUpperCase().includes("ST") || name.includes("退")) return false;
     if (soeOnly) return !!soeDeals[r.code];
     if (hotOnly) return coreTags(r).length >= 2;
     return prefix === "all" || r.prefix === prefix;
@@ -1089,9 +1099,12 @@ def sync_pages() -> None:
     (DOCS / "index.html").write_text(PAGE, encoding="utf-8")
     src = WEB / "results.json"
     if src.exists():
-        text = src.read_text(encoding="utf-8")
+        payload = json.loads(src.read_text(encoding="utf-8"))
+        payload = _without_star(payload)
+        text = json.dumps(payload, ensure_ascii=False)
+        src.write_text(text, encoding="utf-8")
         (DOCS / "results.json").write_text(text, encoding="utf-8")
-        export_published_bars(json.loads(text).get("rows") or [])
+        export_published_bars(payload.get("rows") or [])
 
 
 def main() -> None:
