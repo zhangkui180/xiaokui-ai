@@ -698,7 +698,7 @@ async function boot() {
     data = await res.json();
     localTool = false;
     document.getElementById("refreshBtn").hidden = true;
-    document.getElementById("refreshMsg").textContent = "这是已发布的结果。重新拉取请在自己电脑上打开工具，拉完后再发布一次。";
+    document.getElementById("refreshMsg").textContent = "这是已发布的结果。手机要拉取：电脑先开着工具，手机连同一个 WiFi，打开电脑窗口里印出的地址，再点重新拉取。";
   }
   board = data;
   applyMeta(data);
@@ -706,7 +706,8 @@ async function boot() {
   renderList();
   if (!localTool) return;
   const s = await fetch("/api/refresh").then(r => r.json()).catch(() => null);
-  if (s && s.running) pollRefresh();
+  if (s && s.running) { pollRefresh(); return; }
+  if (data.phone) document.getElementById("refreshMsg").textContent = "手机连同一 WiFi，打开 " + data.phone + " 也能点重新拉取。电脑要一直开着这个窗口。";
 }
 boot().catch(() => { document.getElementById("meta").textContent = "结果没有读出来"; });
 </script>

@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+import socket
 import sys
 import threading
 import traceback
@@ -19,6 +20,21 @@ WEB = ROOT / "web"
 DOCS = ROOT / "docs"
 CACHE = ROOT / "cache"
 PORT = 8771
+
+
+def lan_url() -> str:
+    ip = ""
+    try:
+        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        sock.settimeout(0.5)
+        sock.connect(("8.8.8.8", 80))
+        ip = sock.getsockname()[0]
+        sock.close()
+    except OSError:
+        return ""
+    if not ip or ip.startswith("127."):
+        return ""
+    return f"http://{ip}:{PORT}/"
 
 sys.path.insert(0, str(ROOT))
 from joy_factor import joy_factor
@@ -996,7 +1012,7 @@ async function boot() {
     data = await res.json();
     localTool = false;
     document.getElementById("refreshBtn").hidden = true;
-    document.getElementById("refreshMsg").textContent = "这是已发布的结果。重新拉取请在自己电脑上打开工具，拉完后再发布一次。";
+    document.getElementById("refreshMsg").textContent = "这是已发布的结果。手机要拉取：电脑先开着工具，手机连同一个 WiFi，打开电脑窗口里印出的地址，再点重新拉取。";
   }
   board = data;
   applyMeta(data);
@@ -1004,7 +1020,8 @@ async function boot() {
   renderList();
   if (!localTool) return;
   const s = await fetch("/api/refresh").then(r => r.json()).catch(() => null);
-  if (s && s.running) pollRefresh();
+  if (s && s.running) { pollRefresh(); return; }
+  if (data.phone) document.getElementById("refreshMsg").textContent = "手机连同一 WiFi，打开 " + data.phone + " 也能点重新拉取。电脑要一直开着这个窗口。";
 }
 boot().catch(() => { document.getElementById("meta").textContent = "结果没有读出来"; });
 </script>
@@ -1030,6 +1047,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/list":
             board = load_board()
             attach_market_caps(board.get("rows") or [])
+            phone = lan_url()
+            if phone:
+                board["phone"] = phone
             body = json.dumps(board, ensure_ascii=False).encode("utf-8")
             self._send(200, body, "application/json; charset=utf-8")
             return
@@ -1093,8 +1113,12 @@ def sync_pages() -> None:
 
 def main() -> None:
     sync_pages()
-    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
-    print(f"小葵的Ai http://127.0.0.1:{PORT}/", flush=True)
+    ThreadingHTTPServer.allow_reuse_address = True
+    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
+    print(f"电脑打开 http://127.0.0.1:{PORT}/", flush=True)
+    phone = lan_url()
+    if phone:
+        print(f"手机同一 WiFi 打开 {phone}", flush=True)
     server.serve_forever()
 
 
