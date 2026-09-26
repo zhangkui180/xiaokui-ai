@@ -333,6 +333,11 @@ PAGE = r"""<!DOCTYPE html>
   .hotbtn.active { border-color:var(--ink); }
   button:focus-visible { outline:2px solid #d6d3d1; outline-offset:1px; }
   .layout { display:grid; grid-template-columns:1fr; gap:14px; }
+  @media (max-width:979px) {
+    .layout.picked { display:flex; flex-direction:column; }
+    .layout.picked .detail { order:-1; scroll-margin-top:120px; }
+    svg.kline { min-height:220px; }
+  }
   @media (min-width:980px) {
     .layout { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); align-items:start; }
     .layout > section { max-height:calc(100vh - 168px); overflow:auto; padding-right:6px; }
@@ -379,8 +384,8 @@ PAGE = r"""<!DOCTYPE html>
   .metrics span { display:block; color:var(--muted); font-size:12px; }
   .metrics b { font-size:16px; font-weight:680; font-variant-numeric:tabular-nums; }
   .block-title { margin:16px 0 2px; font-size:12px; font-weight:650; letter-spacing:.06em; color:var(--muted); }
-  .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; }
-  svg.kline { width:100%; height:auto; display:block; cursor:grab; touch-action:none; }
+  .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; scroll-margin-top:96px; }
+  svg.kline { width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:none; }
   svg.kline.dragging { cursor:grabbing; }
   .kline-cap { margin:6px 2px 0; font-size:12px; }
   .kline-tip { position:absolute; z-index:3; width:max-content; max-width:calc(100% - 8px); padding:8px 10px; background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px; font-size:12px; line-height:1.4; pointer-events:none; box-shadow:0 10px 28px rgba(28,25,23,.12); }
@@ -548,6 +553,9 @@ function paintChart() {
   }).join("");
   const split = padY + priceH + gap / 2;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("width", String(w));
+  svg.setAttribute("height", String(h));
+  svg.style.aspectRatio = w + " / " + h;
   svg.dataset.w = w;
   svg.dataset.h = h;
   svg.dataset.padx = padX;
@@ -680,6 +688,13 @@ function bindKline() {
   }, { passive: false });
   hideBar();
 }
+function revealChart() {
+  const layout = document.querySelector(".layout");
+  if (layout) layout.classList.add("picked");
+  if (window.innerWidth >= 980) return;
+  const detail = document.getElementById("detail");
+  if (detail) detail.scrollIntoView({behavior:"auto", block:"start"});
+}
 async function showPublishedDetail(row) {
   const pct = Number(row.pct);
   const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
@@ -699,6 +714,7 @@ async function showPublishedDetail(row) {
     <div id="kline-cap" class="muted kline-cap">正在读取日K…</div>
     <div class="tags">${tags}</div>
     ${soe}`;
+  revealChart();
   chartBars = [];
   try {
     const res = await fetch("bars/" + encodeURIComponent(row.code) + ".json");
@@ -712,6 +728,7 @@ async function showPublishedDetail(row) {
   chartStart = Math.max(0, chartBars.length - CHART_VISIBLE);
   paintChart();
   bindKline();
+  revealChart();
 }
 async function openDetail(code, name) {
   selected = code;
@@ -720,7 +737,6 @@ async function openDetail(code, name) {
     const row = board.rows.find(r => r.code === code);
     if (!row) { detailEl.innerHTML = `<p>没有数据</p>`; return; }
     await showPublishedDetail(row);
-    if (window.innerWidth < 980) detailEl.scrollIntoView({behavior:"smooth", block:"nearest"});
     return;
   }
   detailEl.innerHTML = `<p class="muted">正在计算 ${esc(code)} …</p>`;
@@ -747,7 +763,7 @@ async function openDetail(code, name) {
   chartStart = Math.max(0, chartBars.length - CHART_VISIBLE);
   paintChart();
   bindKline();
-  if (window.innerWidth < 980) detailEl.scrollIntoView({behavior:"smooth", block:"nearest"});
+  revealChart();
 }
 function setBoard(nextPrefix) {
   prefix = nextPrefix;
