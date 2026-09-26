@@ -24,6 +24,8 @@
   #refreshMsg:empty { display:none; }
   #refreshMsg { margin:6px 0 0; font-size:12px; }
   .sub { color:var(--muted); margin:4px 0 0; font-size:13px; }
+  .addrs { margin:6px 0 0; font-size:12px; color:var(--muted); }
+  .addrs a { color:inherit; text-decoration:none; }
   .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
   button { font:inherit; color:var(--ink); }
   .seg { display:flex; flex-wrap:wrap; gap:2px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:3px; }
@@ -123,6 +125,7 @@
     <button class="refresh" id="refreshBtn" type="button">重新拉取</button>
   </div>
   <p class="sub" id="meta">正在读取筛选结果…</p>
+  <p class="addrs">电脑 <a href="http://127.0.0.1:8771/">127.0.0.1:8771</a> · 手机 <a href="https://zhangkui180.github.io/xiaokui-ai/">zhangkui180.github.io/xiaokui-ai</a></p>
   <p class="muted" id="refreshMsg"></p>
 </header>
 <main>
@@ -698,7 +701,7 @@ async function boot() {
     data = await res.json();
     localTool = false;
     document.getElementById("refreshBtn").hidden = true;
-    document.getElementById("refreshMsg").textContent = "这是已发布的结果。手机要拉取：电脑先开着工具，手机连同一个 WiFi，打开电脑窗口里印出的地址，再点重新拉取。";
+    document.getElementById("refreshMsg").textContent = "这是已发布的结果。重新拉取请在电脑打开 127.0.0.1:8771 ，拉完后再发布一次。";
   }
   board = data;
   applyMeta(data);
@@ -706,8 +709,7 @@ async function boot() {
   renderList();
   if (!localTool) return;
   const s = await fetch("/api/refresh").then(r => r.json()).catch(() => null);
-  if (s && s.running) { pollRefresh(); return; }
-  if (data.phone) document.getElementById("refreshMsg").textContent = "手机连同一 WiFi，打开 " + data.phone + " 也能点重新拉取。电脑要一直开着这个窗口。";
+  if (s && s.running) pollRefresh();
 }
 boot().catch(() => { document.getElementById("meta").textContent = "结果没有读出来"; });
 </script>

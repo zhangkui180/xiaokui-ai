@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-import socket
 import sys
 import threading
 import traceback
@@ -20,21 +19,6 @@ WEB = ROOT / "web"
 DOCS = ROOT / "docs"
 CACHE = ROOT / "cache"
 PORT = 8771
-
-
-def lan_url() -> str:
-    ip = ""
-    try:
-        sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-        sock.settimeout(0.5)
-        sock.connect(("8.8.8.8", 80))
-        ip = sock.getsockname()[0]
-        sock.close()
-    except OSError:
-        return ""
-    if not ip or ip.startswith("127."):
-        return ""
-    return f"http://{ip}:{PORT}/"
 
 sys.path.insert(0, str(ROOT))
 from joy_factor import joy_factor
@@ -338,6 +322,8 @@ PAGE = r"""<!DOCTYPE html>
   #refreshMsg:empty { display:none; }
   #refreshMsg { margin:6px 0 0; font-size:12px; }
   .sub { color:var(--muted); margin:4px 0 0; font-size:13px; }
+  .addrs { margin:6px 0 0; font-size:12px; color:var(--muted); }
+  .addrs a { color:inherit; text-decoration:none; }
   .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
   button { font:inherit; color:var(--ink); }
   .seg { display:flex; flex-wrap:wrap; gap:2px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:3px; }
@@ -437,6 +423,7 @@ PAGE = r"""<!DOCTYPE html>
     <button class="refresh" id="refreshBtn" type="button">重新拉取</button>
   </div>
   <p class="sub" id="meta">正在读取筛选结果…</p>
+  <p class="addrs">电脑 <a href="http://127.0.0.1:8771/">127.0.0.1:8771</a> · 手机 <a href="https://zhangkui180.github.io/xiaokui-ai/">zhangkui180.github.io/xiaokui-ai</a></p>
   <p class="muted" id="refreshMsg"></p>
 </header>
 <main>
@@ -1012,7 +999,7 @@ async function boot() {
     data = await res.json();
     localTool = false;
     document.getElementById("refreshBtn").hidden = true;
-    document.getElementById("refreshMsg").textContent = "这是已发布的结果。手机要拉取：电脑先开着工具，手机连同一个 WiFi，打开电脑窗口里印出的地址，再点重新拉取。";
+    document.getElementById("refreshMsg").textContent = "这是已发布的结果。重新拉取请在电脑打开 127.0.0.1:8771 ，拉完后再发布一次。";
   }
   board = data;
   applyMeta(data);
@@ -1020,8 +1007,7 @@ async function boot() {
   renderList();
   if (!localTool) return;
   const s = await fetch("/api/refresh").then(r => r.json()).catch(() => null);
-  if (s && s.running) { pollRefresh(); return; }
-  if (data.phone) document.getElementById("refreshMsg").textContent = "手机连同一 WiFi，打开 " + data.phone + " 也能点重新拉取。电脑要一直开着这个窗口。";
+  if (s && s.running) pollRefresh();
 }
 boot().catch(() => { document.getElementById("meta").textContent = "结果没有读出来"; });
 </script>
@@ -1047,9 +1033,6 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/list":
             board = load_board()
             attach_market_caps(board.get("rows") or [])
-            phone = lan_url()
-            if phone:
-                board["phone"] = phone
             body = json.dumps(board, ensure_ascii=False).encode("utf-8")
             self._send(200, body, "application/json; charset=utf-8")
             return
@@ -1114,11 +1097,9 @@ def sync_pages() -> None:
 def main() -> None:
     sync_pages()
     ThreadingHTTPServer.allow_reuse_address = True
-    server = ThreadingHTTPServer(("0.0.0.0", PORT), Handler)
-    print(f"电脑打开 http://127.0.0.1:{PORT}/", flush=True)
-    phone = lan_url()
-    if phone:
-        print(f"手机同一 WiFi 打开 {phone}", flush=True)
+    server = ThreadingHTTPServer(("127.0.0.1", PORT), Handler)
+    print(f"电脑 http://127.0.0.1:{PORT}/", flush=True)
+    print("手机 https://zhangkui180.github.io/xiaokui-ai/", flush=True)
     server.serve_forever()
 
 
