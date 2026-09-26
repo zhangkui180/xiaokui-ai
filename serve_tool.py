@@ -407,7 +407,8 @@ PAGE = r"""<!DOCTYPE html>
     .metrics { grid-template-columns:repeat(2, minmax(0,1fr)); }
   }
   @media (max-width:979px) {
-    .kline-tip { left:4px; top:4px; max-width:calc(100% - 52px); padding:4px 6px; font-size:11px; line-height:1.25; }
+    .kzoom { left:6px; right:auto; flex-direction:row; }
+    .kline-tip { left:4px; top:46px; max-width:calc(100% - 8px); padding:4px 6px; font-size:11px; line-height:1.25; }
     .kline-tip .kline-cols { gap:8px; }
     .kline-tip .kline-row { gap:6px; }
   }
@@ -637,7 +638,7 @@ function showBar(index) {
     + tipRow("最高", px2(b.high), "up")
     + tipRow("最低", px2(b.low), "down")
     + tipRow("收盘", px2(b.close), cls)
-    + tipRow("涨跌", chg == null ? "—" : `${signed(chg, 2)} ${signed(pct, 2)}%`, cls)
+    + tipRow("涨跌", pct == null ? "—" : signed(pct, 2) + "%", cls)
     + tipRow("振幅", amp == null ? "—" : amp.toFixed(2) + "%")
     + tipRow("成交量", hands(b.volume))
     + tipRow("成交额", money(b.amount))
@@ -653,7 +654,7 @@ function showBar(index) {
   tip.hidden = false;
   if (window.innerWidth < 980) {
     tip.style.left = "4px";
-    tip.style.top = "4px";
+    tip.style.top = "46px";
     return;
   }
   const wrap = svg.parentElement.getBoundingClientRect();
