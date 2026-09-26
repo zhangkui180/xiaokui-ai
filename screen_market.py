@@ -19,7 +19,7 @@ from pathlib import Path
 import pandas as pd
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from joy_factor import joy_factor
+from joy_factor import cap_delist_risk, exchange_risk_name, joy_factor
 
 ROOT = Path(__file__).resolve().parent
 CACHE = ROOT / "cache"
@@ -98,9 +98,7 @@ def fetch_universe() -> list[dict]:
 
 
 def is_exchange_risk(name: str) -> bool:
-    """交易所用简称标风险：*ST / ST 是退市风险或其他风险警示，退是退市整理。立案后被警示的也会改成 ST。"""
-    text = str(name or "")
-    return ("ST" in text.upper()) or ("退" in text)
+    return exchange_risk_name(name)
 
 
 def _symbol(code: str) -> str:
@@ -159,7 +157,7 @@ def evaluate(stock: dict, force: bool = False) -> dict | None:
     frame = fetch_bars(stock["code"], force=force)
     if frame is None or frame.empty:
         return None
-    scored = joy_factor(frame)
+    scored = joy_factor(frame, name=stock["name"], code=stock["code"])
     last = scored.iloc[-1]
     prev_close = float(scored["close"].iloc[-2]) if len(scored) > 1 else float(last["close"])
     price = float(last["close"])
@@ -323,6 +321,32 @@ render();
     OUT_HTML.write_text(html, encoding="utf-8")
 
 
+def _total_caps(codes: list[str]) -> dict[str, float]:
+    """腾讯行情里的总市值，单位元。拉不到的代码不放进结果。"""
+    found: dict[str, float] = {}
+    for start in range(0, len(codes), 60):
+        batch = [code for code in codes[start : start + 60] if code]
+        if not batch:
+            continue
+        symbols = ",".join(("sh" if code.startswith("6") else "sz") + code for code in batch)
+        try:
+            text = _get("https://qt.gtimg.cn/q=" + symbols).decode("gbk", "replace")
+        except Exception:
+            continue
+        for line in text.split(";"):
+            parts = line.split("~")
+            if len(parts) < 46:
+                continue
+            code = parts[2].strip()
+            try:
+                yi = float(parts[45])
+            except (TypeError, ValueError):
+                continue
+            if code and yi > 0:
+                found[code] = yi * 1e8
+    return found
+
+
 def scan_market(force: bool = False, on_progress=None) -> dict:
     """按因子扫 6 / 3 / 0。force 时忽略 18 小时缓存，重新拉日线。"""
     started = time.time()
@@ -361,6 +385,8 @@ def scan_market(force: bool = False, on_progress=None) -> dict:
                 print(f"progress {done}/{len(universe)} hits={len(matches)} failed={failed}", flush=True)
     asof = max(dates) if dates else datetime.now().strftime("%Y-%m-%d")
     matches = [row for row in matches if row["date"] == asof]
+    caps = _total_caps([row["code"] for row in matches])
+    matches = [row for row in matches if not cap_delist_risk(row["code"], caps.get(row["code"]))]
     matches.sort(key=lambda r: (-r["score"], r["code"]))
     if not matches:
         raise RuntimeError("这次没有筛出符合入场的股票")

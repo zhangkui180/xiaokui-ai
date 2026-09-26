@@ -36,6 +36,20 @@ def _pick(df: pd.DataFrame, name: str) -> pd.Series:
     raise KeyError(f"缺少列 {name}，可用列名：{_ALIASES[name]}")
 
 
+def exchange_risk_name(name: str) -> bool:
+    """交易所写在简称里的风险：*ST / ST 含退市风险和其他风险警示，退是退市整理。立案后被警示的会改成 ST。"""
+    text = str(name or "")
+    return ("ST" in text.upper()) or ("退" in text)
+
+
+def cap_delist_risk(code: str, total_mv: float | None) -> bool:
+    """市值退市线是主板 5 亿、创业板 3 亿。低于这条线的 1.5 倍，视为可能碰到退市。"""
+    if total_mv is None or total_mv <= 0:
+        return False
+    line = 3e8 if str(code).startswith("3") else 5e8
+    return float(total_mv) < line * 1.5
+
+
 def _ema(series: pd.Series, span: int) -> pd.Series:
     return series.ewm(span=span, adjust=False).mean()
 
@@ -62,6 +76,9 @@ def _carry(level: pd.Series, trigger: pd.Series, limit: int) -> pd.Series:
 def joy_factor(
     df: pd.DataFrame,
     *,
+    name: str = "",
+    code: str = "",
+    total_mv: float | None = None,
     ma_tide: int = 160,
     ma_mid: int = 40,
     ma_short: int = 10,
@@ -205,9 +222,9 @@ def joy_factor(
         "vol_break": (vol_break, 4),
     }
     score = pd.Series(0.0, index=idx)
-    for name, (cond, weight) in parts.items():
+    for part_name, (cond, weight) in parts.items():
         flag = _flag(cond)
-        out[name] = flag
+        out[part_name] = flag
         score = score + flag.astype(float) * weight
     out["distribution"] = _flag(distribution)
     score = score - out["distribution"].astype(float) * 20
@@ -215,8 +232,16 @@ def joy_factor(
 
     # 顺势模型必须大级别向上。底部三步曲是他单独练的抄底结构，不要求 160 日已经拐头。
     # 单纯背驰不加进场，他说过背驰只说明动能衰竭，不一定反转。
+    # 退市或立案风险直接否掉入场：简称已被交易所标成 ST / *ST / 退，
+    # 近 20 日价格碰到 1 元以下或现价低于 2 元，或总市值已经靠近市值退市线。
     trend_entry = tide & (screen | m520 | attack3 | dragon | buy3 | rule123)
-    out["joy_entry"] = (trend_entry | bottom3) & ~out["distribution"]
+    par_hit = (c.rolling(20, min_periods=1).min() < 1) | (l.rolling(20, min_periods=1).min() < 1)
+    near_par = c < 2
+    risk_block = _flag(par_hit | near_par)
+    if exchange_risk_name(name) or cap_delist_risk(code, total_mv):
+        risk_block = pd.Series(True, index=idx)
+    out["risk_block"] = risk_block
+    out["joy_entry"] = (trend_entry | bottom3) & ~out["distribution"] & ~out["risk_block"]
 
     tr = pd.concat([(h - l), (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
     out["atr14"] = tr.rolling(14).mean()

@@ -279,7 +279,14 @@ def stock_detail(code: str) -> dict:
     if not path.exists() or len(code) != 6:
         return {"ok": False, "code": code, "error": "本地没有这只股票的日线"}
     frame = load_history(code, pd.read_csv(path).sort_values("date"))
-    scored = joy_factor(frame)
+    name = ""
+    for row in load_board().get("rows") or []:
+        if str(row.get("code") or "") == code:
+            name = str(row.get("name") or "")
+            break
+    fetch_market_caps([code])
+    total_mv = _CAP_CACHE.get(code, (None, None))[0]
+    scored = joy_factor(frame, name=name, code=code, total_mv=total_mv)
     last = scored.iloc[-1]
     prev = float(scored["close"].iloc[-2]) if len(scored) > 1 else float(last["close"])
     price = float(last["close"])
