@@ -12,8 +12,7 @@ git add web/results.json docs/results.json docs/index.html docs/bars
 git diff --cached --quiet
 if errorlevel 1 (
   git -c user.name=zhangkui180 -c user.email=58655214+zhangkui180@users.noreply.github.com commit -m "更新已发布的筛选结果"
-  for /f %%i in ('"C:\Users\37090\AppData\Local\Programs\gh\bin\gh.exe" auth token') do set GH_TOKEN=%%i
-  git -c http.extraheader="AUTHORIZATION: bearer %GH_TOKEN%" push origin HEAD
+  git -c credential.helper= -c "credential.helper=!\"C:\Users\37090\AppData\Local\Programs\gh\bin\gh.exe\" auth git-credential" push origin HEAD
 ) else (
   echo 结果和上次发布的一样，没有新内容要发。
 )
