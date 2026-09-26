@@ -336,7 +336,7 @@ PAGE = r"""<!DOCTYPE html>
   @media (max-width:979px) {
     .layout.picked { display:flex; flex-direction:column; }
     .layout.picked .detail { order:-1; scroll-margin-top:120px; }
-    svg.kline { min-height:280px; }
+    svg.kline { width:100%; max-width:100%; height:240px; aspect-ratio:auto; }
   }
   @media (min-width:980px) {
     .layout { grid-template-columns: minmax(300px, 380px) minmax(0, 1fr); align-items:start; }
@@ -384,8 +384,10 @@ PAGE = r"""<!DOCTYPE html>
   .metrics span { display:block; color:var(--muted); font-size:12px; }
   .metrics b { font-size:16px; font-weight:680; font-variant-numeric:tabular-nums; }
   .block-title { margin:16px 0 2px; font-size:12px; font-weight:650; letter-spacing:.06em; color:var(--muted); }
-  .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; scroll-margin-top:96px; }
-  svg.kline { width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:none; }
+  .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; overflow:hidden; scroll-margin-top:96px; touch-action:none; }
+  svg.kline { width:100%; max-width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:none; }
+  .kzoom { position:absolute; top:6px; right:6px; z-index:4; display:flex; flex-direction:column; gap:4px; }
+  .kzoom button { width:34px; height:34px; padding:0; border-radius:8px; border:1px solid var(--line); background:rgba(255,255,255,.94); font-size:20px; line-height:1; cursor:pointer; }
   svg.kline.dragging { cursor:grabbing; }
   .kline-cap { margin:6px 2px 0; font-size:12px; }
   .kline-tip { position:absolute; z-index:3; width:max-content; max-width:calc(100% - 8px); padding:8px 10px; background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px; font-size:12px; line-height:1.4; pointer-events:none; box-shadow:0 10px 28px rgba(28,25,23,.12); }
@@ -403,10 +405,11 @@ PAGE = r"""<!DOCTYPE html>
   @media (max-width:700px) {
     header, main { padding-left:14px; padding-right:14px; }
     .metrics { grid-template-columns:repeat(2, minmax(0,1fr)); }
-    .kline-cols { flex-direction:column; gap:4px; }
   }
   @media (max-width:979px) {
-    .kline-tip { position:static; width:auto; max-width:none; margin:6px 2px 2px; box-shadow:none; }
+    .kline-tip { left:4px; top:4px; max-width:calc(100% - 52px); padding:4px 6px; font-size:11px; line-height:1.25; }
+    .kline-tip .kline-cols { gap:8px; }
+    .kline-tip .kline-row { gap:6px; }
   }
 </style>
 </head>
@@ -455,8 +458,10 @@ const soeDeals = {
 let selected = "";
 let chartBars = [];
 let chartStart = 0;
+let chartSpan = 110;
 let localTool = false;
-const CHART_VISIBLE = 110;
+const CHART_SPAN_MIN = 16;
+const CHART_SPAN_MAX = 900;
 
 const listEl = document.getElementById("list");
 const detailEl = document.getElementById("detail");
@@ -522,18 +527,32 @@ function signed(v, digits) {
   const n = Number(v);
   return (n > 0 ? "+" : "") + n.toFixed(digits);
 }
+function visibleSpan() {
+  return Math.max(1, Math.min(chartSpan, chartBars.length));
+}
 function clampChartStart() {
-  const count = Math.min(CHART_VISIBLE, chartBars.length);
-  chartStart = Math.max(0, Math.min(chartStart, chartBars.length - count));
+  const count = visibleSpan();
+  chartStart = Math.max(0, Math.min(chartStart, Math.max(0, chartBars.length - count)));
+}
+function zoomChart(nextSpan, anchorIndex) {
+  const limit = Math.min(CHART_SPAN_MAX, chartBars.length);
+  const span = Math.max(CHART_SPAN_MIN, Math.min(Math.round(nextSpan), Math.max(CHART_SPAN_MIN, limit)));
+  if (span === chartSpan) return;
+  const count = Math.min(span, chartBars.length);
+  chartSpan = span;
+  chartStart = Math.round(anchorIndex - count / 2);
+  clampChartStart();
+  paintChart();
 }
 function paintChart() {
   const svg = document.getElementById("kline-svg");
   const cap = document.getElementById("kline-cap");
   if (!svg || !chartBars.length) return;
-  const count = Math.min(CHART_VISIBLE, chartBars.length);
+  const count = visibleSpan();
   clampChartStart();
   const bars = chartBars.slice(chartStart, chartStart + count);
-  const w = 640, priceH = 148, volH = window.innerWidth < 980 ? 112 : 56, gap = 14, padX = 6, padY = 8;
+  const narrow = window.innerWidth < 980;
+  const w = 640, priceH = 148, volH = narrow ? 112 : 56, gap = 14, padX = 6, padY = 8;
   const h = padY + priceH + gap + volH + 6;
   const slot = (w - padX * 2) / bars.length;
   const bw = Math.max(1.2, slot * 0.62);
@@ -558,7 +577,15 @@ function paintChart() {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.setAttribute("width", String(w));
   svg.setAttribute("height", String(h));
-  svg.style.aspectRatio = w + " / " + h;
+  if (window.innerWidth < 980) {
+    svg.style.aspectRatio = "auto";
+    svg.style.width = "100%";
+    svg.style.height = "240px";
+  } else {
+    svg.style.aspectRatio = w + " / " + h;
+    svg.style.width = "100%";
+    svg.style.height = "auto";
+  }
   svg.dataset.w = w;
   svg.dataset.h = h;
   svg.dataset.padx = padX;
@@ -572,8 +599,8 @@ function paintChart() {
   const first = chartBars[0].date;
   const last = chartBars[chartBars.length - 1].date;
   cap.textContent = chartBars.length > count
-    ? `${first} → ${last} · 当前 ${bars[0].date} → ${bars[bars.length - 1].date} · 按住左右拖动`
-    : `${first} → ${last} · 已是全部日K`;
+    ? `${first} → ${last} · 当前 ${bars[0].date} → ${bars[bars.length - 1].date} · 双指缩放，单指拖动`
+    : `${first} → ${last} · 已是全部日K · 双指可放大`;
 }
 function tipRow(label, value, cls) {
   return `<div class="kline-row"><span class="muted">${label}</span><span class="${cls || ""}">${value}</span></div>`;
@@ -624,6 +651,11 @@ function showBar(index) {
     + tipRow("DEA", b.dea == null ? "—" : Number(b.dea).toFixed(3))
     + `</div></div>`;
   tip.hidden = false;
+  if (window.innerWidth < 980) {
+    tip.style.left = "4px";
+    tip.style.top = "4px";
+    return;
+  }
   const wrap = svg.parentElement.getBoundingClientRect();
   const svgBox = svg.getBoundingClientRect();
   const tipW = tip.offsetWidth || 180;
@@ -652,12 +684,31 @@ function bindKline() {
   const svg = document.getElementById("kline-svg");
   if (!svg || !chartBars.length || svg.dataset.bound) return;
   svg.dataset.bound = "1";
+  const pts = new Map();
   let drag = null;
+  let pinch = null;
   let tipHold = false;
   const hideTip = () => { tipHold = false; hideBar(); };
+  const fingerDist = () => {
+    const a = [...pts.values()];
+    if (a.length < 2) return 0;
+    return Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y);
+  };
+  const fingerMidX = () => {
+    const a = [...pts.values()];
+    return (a[0].x + a[1].x) / 2;
+  };
   svg.addEventListener("pointerdown", ev => {
-    if (ev.button !== 0) return;
+    if (ev.pointerType === "mouse" && ev.button !== 0) return;
+    pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    if (pts.size >= 2) {
+      drag = null;
+      svg.classList.remove("dragging");
+      hideTip();
+      pinch = { dist: Math.max(fingerDist(), 1), span: chartSpan, anchor: barIndexAt(svg, fingerMidX()) };
+      return;
+    }
     drag = { x: ev.clientX, start: chartStart, moved: false, touch: ev.pointerType === "touch" };
     if (drag.touch) {
       tipHold = true;
@@ -668,8 +719,14 @@ function bindKline() {
     }
   });
   svg.addEventListener("pointermove", ev => {
+    if (pts.has(ev.pointerId)) pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
+    if (pinch && pts.size >= 2) {
+      const dist = fingerDist();
+      if (dist > 12) zoomChart(pinch.span * (pinch.dist / dist), pinch.anchor);
+      return;
+    }
     if (!drag) {
-      showBar(barIndexAt(svg, ev.clientX));
+      if (ev.pointerType !== "touch") showBar(barIndexAt(svg, ev.clientX));
       return;
     }
     const dx = ev.clientX - drag.x;
@@ -683,34 +740,57 @@ function bindKline() {
     const rect = svg.getBoundingClientRect();
     const count = Number(svg.dataset.count) || 1;
     const next = drag.start - Math.round(dx / (rect.width / count));
-    const countFit = Math.min(CHART_VISIBLE, chartBars.length);
+    const countFit = visibleSpan();
     const clamped = Math.max(0, Math.min(next, chartBars.length - countFit));
     if (clamped !== chartStart) {
       chartStart = clamped;
       paintChart();
     }
   });
-  const endDrag = ev => {
+  const endPointer = ev => {
+    const wasPinch = !!pinch;
+    pts.delete(ev.pointerId);
+    if (pts.size < 2) pinch = null;
+    if (wasPinch) {
+      drag = null;
+      svg.classList.remove("dragging");
+      return;
+    }
     if (drag && drag.touch && !drag.moved) {
       tipHold = true;
       showBar(barIndexAt(svg, ev.clientX));
-    } else {
+    } else if (ev.type !== "pointercancel") {
       tipHold = false;
+    } else {
+      hideTip();
     }
     drag = null;
     svg.classList.remove("dragging");
   };
-  svg.addEventListener("pointerup", endDrag);
-  svg.addEventListener("pointercancel", () => { hideTip(); drag = null; svg.classList.remove("dragging"); });
-  svg.addEventListener("pointerleave", () => { if (!drag && !tipHold) hideBar(); });
+  svg.addEventListener("pointerup", endPointer);
+  svg.addEventListener("pointercancel", endPointer);
+  svg.addEventListener("pointerleave", () => { if (!drag && !pinch && !tipHold) hideBar(); });
   svg.addEventListener("wheel", ev => {
     ev.preventDefault();
-    const countFit = Math.min(CHART_VISIBLE, chartBars.length);
+    if (ev.ctrlKey || ev.metaKey) {
+      zoomChart(chartSpan * (ev.deltaY > 0 ? 1.25 : 0.8), barIndexAt(svg, ev.clientX));
+      return;
+    }
+    const countFit = visibleSpan();
     const next = chartStart + (ev.deltaY > 0 ? -8 : 8);
     chartStart = Math.max(0, Math.min(next, chartBars.length - countFit));
     hideBar();
     paintChart();
   }, { passive: false });
+  const zoomIn = document.getElementById("kzoom-in");
+  const zoomOut = document.getElementById("kzoom-out");
+  const onZoom = (factor, ev) => {
+    ev.preventDefault();
+    ev.stopPropagation();
+    zoomChart(chartSpan * factor, chartStart + visibleSpan() / 2);
+  };
+  if (zoomIn) zoomIn.addEventListener("click", ev => onZoom(0.72, ev));
+  if (zoomOut) zoomOut.addEventListener("click", ev => onZoom(1.4, ev));
   hideBar();
 }
 function revealChart() {
@@ -735,7 +815,7 @@ async function showPublishedDetail(row) {
       <div><span>止损参考</span><b>${row.stop == null ? "—" : Number(row.stop).toFixed(2)}</b></div>
       <div><span>2:1 目标</span><b>${row.target == null ? "—" : Number(row.target).toFixed(2)}</b></div>
     </div>
-    <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div></div>
+    <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div><div class="kzoom"><button type="button" id="kzoom-in" aria-label="放大">+</button><button type="button" id="kzoom-out" aria-label="缩小">−</button></div></div>
     <div id="kline-cap" class="muted kline-cap">正在读取日K…</div>
     <div class="tags">${tags}</div>
     ${soe}`;
@@ -750,7 +830,8 @@ async function showPublishedDetail(row) {
     if (capEl) capEl.textContent = "这只股票的日K还没发布。";
     return;
   }
-  chartStart = Math.max(0, chartBars.length - CHART_VISIBLE);
+  chartSpan = 110;
+  chartStart = Math.max(0, chartBars.length - chartSpan);
   paintChart();
   bindKline();
   revealChart();
@@ -780,12 +861,13 @@ async function openDetail(code, name) {
       <div><span>止损参考</span><b>${data.stop == null ? "—" : Number(data.stop).toFixed(2)}</b></div>
       <div><span>2:1 目标</span><b>${data.target == null ? "—" : Number(data.target).toFixed(2)}</b></div>
     </div>
-    <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div></div>
+    <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div><div class="kzoom"><button type="button" id="kzoom-in" aria-label="放大">+</button><button type="button" id="kzoom-out" aria-label="缩小">−</button></div></div>
     <div id="kline-cap" class="muted kline-cap"></div>
     <h2 class="block-title">规则对照</h2>
     ${flags}`;
   chartBars = data.bars || [];
-  chartStart = Math.max(0, chartBars.length - CHART_VISIBLE);
+  chartSpan = 110;
+  chartStart = Math.max(0, chartBars.length - chartSpan);
   paintChart();
   bindKline();
   revealChart();
