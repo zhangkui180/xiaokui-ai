@@ -384,9 +384,9 @@ PAGE = r"""<!DOCTYPE html>
   .metrics span { display:block; color:var(--muted); font-size:12px; }
   .metrics b { font-size:16px; font-weight:680; font-variant-numeric:tabular-nums; }
   .block-title { margin:16px 0 2px; font-size:12px; font-weight:650; letter-spacing:.06em; color:var(--muted); }
-  .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; overflow:hidden; scroll-margin-top:96px; touch-action:none; }
-  svg.kline { width:100%; max-width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:none; }
-  .kzoom { position:absolute; top:6px; right:6px; z-index:4; display:flex; flex-direction:column; gap:4px; }
+  .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; overflow:hidden; scroll-margin-top:96px; touch-action:pan-y; }
+  svg.kline { width:100%; max-width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:pan-y; }
+  .kzoom { position:absolute; top:6px; right:6px; z-index:4; display:flex; flex-direction:column; gap:4px; touch-action:manipulation; }
   .kzoom button { width:34px; height:34px; padding:0; border-radius:8px; border:1px solid var(--line); background:rgba(255,255,255,.94); font-size:20px; line-height:1; cursor:pointer; }
   svg.kline.dragging { cursor:grabbing; }
   .kline-cap { margin:6px 2px 0; font-size:12px; }
@@ -600,7 +600,7 @@ function paintChart() {
   const first = chartBars[0].date;
   const last = chartBars[chartBars.length - 1].date;
   cap.textContent = chartBars.length > count
-    ? `${first} → ${last} · 当前 ${bars[0].date} → ${bars[bars.length - 1].date} · 双指缩放，单指拖动`
+    ? `${first} → ${last} · 当前 ${bars[0].date} → ${bars[bars.length - 1].date} · 单指滑动看当天，双指缩放或左右移图`
     : `${first} → ${last} · 已是全部日K · 双指可放大`;
 }
 function tipRow(label, value, cls) {
@@ -702,15 +702,20 @@ function bindKline() {
   svg.addEventListener("pointerdown", ev => {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
     pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    if (ev.pointerType !== "touch") {
+      try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+    }
     if (pts.size >= 2) {
       drag = null;
       svg.classList.remove("dragging");
       hideTip();
-      pinch = { dist: Math.max(fingerDist(), 1), span: chartSpan, anchor: barIndexAt(svg, fingerMidX()) };
+      for (const id of pts.keys()) {
+        try { svg.setPointerCapture(id); } catch (e) {}
+      }
+      pinch = { dist: Math.max(fingerDist(), 1), span: chartSpan, anchor: barIndexAt(svg, fingerMidX()), midX: fingerMidX(), start: chartStart, mode: "" };
       return;
     }
-    drag = { x: ev.clientX, start: chartStart, moved: false, touch: ev.pointerType === "touch" };
+    drag = { x: ev.clientX, y: ev.clientY, start: chartStart, moved: false, touch: ev.pointerType === "touch", mode: "" };
     if (drag.touch) {
       tipHold = true;
       showBar(barIndexAt(svg, ev.clientX));
@@ -722,8 +727,28 @@ function bindKline() {
   svg.addEventListener("pointermove", ev => {
     if (pts.has(ev.pointerId)) pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
     if (pinch && pts.size >= 2) {
-      const dist = fingerDist();
-      if (dist > 12) zoomChart(pinch.span * (pinch.dist / dist), pinch.anchor);
+      if (ev.cancelable) ev.preventDefault();
+      const dist = Math.max(fingerDist(), 1);
+      const midX = fingerMidX();
+      const ratio = pinch.dist / dist;
+      const panDx = midX - pinch.midX;
+      if (!pinch.mode) {
+        if (Math.abs(ratio - 1) > 0.08) pinch.mode = "zoom";
+        else if (Math.abs(panDx) > 10) pinch.mode = "pan";
+        else return;
+      }
+      if (pinch.mode === "zoom") zoomChart(pinch.span * ratio, pinch.anchor);
+      if (pinch.mode === "pan") {
+        const rect = svg.getBoundingClientRect();
+        const count = Number(svg.dataset.count) || 1;
+        const next = pinch.start - Math.round(panDx / (rect.width / count));
+        const countFit = visibleSpan();
+        const clamped = Math.max(0, Math.min(next, chartBars.length - countFit));
+        if (clamped !== chartStart) {
+          chartStart = clamped;
+          paintChart();
+        }
+      }
       return;
     }
     if (!drag) {
@@ -731,11 +756,27 @@ function bindKline() {
       return;
     }
     const dx = ev.clientX - drag.x;
-    if (Math.abs(dx) > (drag.touch ? 14 : 4)) drag.moved = true;
-    if (!drag.moved) {
-      if (drag.touch) showBar(barIndexAt(svg, ev.clientX));
+    const dy = ev.clientY - drag.y;
+    if (drag.touch) {
+      if (!drag.mode) {
+        if (Math.hypot(dx, dy) < 10) {
+          showBar(barIndexAt(svg, ev.clientX));
+          return;
+        }
+        drag.mode = Math.abs(dy) > 16 && Math.abs(dy) > Math.abs(dx) * 1.4 ? "scroll" : "read";
+      }
+      if (drag.mode === "scroll") {
+        hideTip();
+        try { svg.releasePointerCapture(ev.pointerId); } catch (e) {}
+        return;
+      }
+      if (ev.cancelable) ev.preventDefault();
+      try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+      showBar(barIndexAt(svg, ev.clientX));
       return;
     }
+    if (Math.abs(dx) > 4) drag.moved = true;
+    if (!drag.moved) return;
     svg.classList.add("dragging");
     hideTip();
     const rect = svg.getBoundingClientRect();
@@ -761,6 +802,9 @@ function bindKline() {
   svg.addEventListener("pointerup", endPointer);
   svg.addEventListener("pointercancel", endPointer);
   svg.addEventListener("pointerleave", () => { if (!drag && !pinch && !tipHold) hideBar(); });
+  svg.addEventListener("touchmove", ev => {
+    if ((drag && drag.mode === "read") || pinch) ev.preventDefault();
+  }, { passive: false });
   svg.addEventListener("wheel", ev => {
     ev.preventDefault();
     if (ev.ctrlKey || ev.metaKey) {
