@@ -316,6 +316,7 @@ PAGE = r"""<!DOCTYPE html>
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate" />
 <title>小葵的Ai</title>
 <style>
   :root {
@@ -1011,7 +1012,7 @@ async function boot() {
     }
   } catch (e) {}
   if (!data) {
-    const res = await fetch("results.json");
+    const res = await fetch("results.json", {cache: "no-store"});
     if (!res.ok) throw new Error("no results");
     data = await res.json();
     localTool = false;
