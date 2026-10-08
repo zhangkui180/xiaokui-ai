@@ -699,16 +699,19 @@ document.getElementById("refreshBtn").onclick = async () => {
 };
 async function boot() {
   let data = null;
-  try {
-    const res = await fetch("/api/list");
-    if (res.ok) {
-      const body = await res.json();
-      if (body && Array.isArray(body.rows)) {
-        data = body;
-        localTool = true;
+  const onLocal = location.hostname === "127.0.0.1" || location.hostname === "localhost";
+  if (onLocal) {
+    try {
+      const res = await fetch("/api/list");
+      if (res.ok) {
+        const body = await res.json();
+        if (body && Array.isArray(body.rows)) {
+          data = body;
+          localTool = true;
+        }
       }
-    }
-  } catch (e) {}
+    } catch (e) {}
+  }
   if (!data) {
     const res = await fetch("results.json", {cache: "no-store"});
     if (!res.ok) throw new Error("no results");
