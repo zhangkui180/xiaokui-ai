@@ -91,7 +91,7 @@
   .metrics b { font-size:16px; font-weight:680; font-variant-numeric:tabular-nums; }
   .block-title { margin:16px 0 2px; font-size:12px; font-weight:650; letter-spacing:.06em; color:var(--muted); }
   .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; overflow:hidden; scroll-margin-top:96px; touch-action:pan-y; }
-  svg.kline { width:100%; max-width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:pan-y; }
+  svg.kline { width:100%; max-width:100%; height:360px; aspect-ratio:auto; display:block; cursor:grab; touch-action:pan-y; }
   .kzoom { position:absolute; top:6px; left:6px; right:auto; z-index:4; display:flex; flex-direction:column; gap:4px; touch-action:manipulation; }
   .kzoom button { width:34px; height:34px; padding:0; border-radius:8px; border:1px solid var(--line); background:rgba(255,255,255,.94); font-size:20px; line-height:1; cursor:pointer; }
   svg.kline.dragging { cursor:grabbing; }
@@ -298,15 +298,9 @@ function paintChart() {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.setAttribute("width", String(w));
   svg.setAttribute("height", String(h));
-  if (window.innerWidth < 980) {
-    svg.style.aspectRatio = "auto";
-    svg.style.width = "100%";
-    svg.style.height = "240px";
-  } else {
-    svg.style.aspectRatio = w + " / " + h;
-    svg.style.width = "100%";
-    svg.style.height = "auto";
-  }
+  svg.style.aspectRatio = "auto";
+  svg.style.width = "100%";
+  svg.style.height = narrow ? "240px" : "360px";
   svg.dataset.w = w;
   svg.dataset.h = h;
   svg.dataset.padx = padX;
@@ -550,8 +544,12 @@ function bindKline() {
 function revealChart() {
   const layout = document.querySelector(".layout");
   if (layout) layout.classList.add("picked");
-  if (window.innerWidth >= 980) return;
   const detail = document.getElementById("detail");
+  const chart = document.querySelector(".kline-wrap");
+  if (window.innerWidth >= 980) {
+    if (chart) chart.scrollIntoView({block:"nearest"});
+    return;
+  }
   if (detail) detail.scrollIntoView({behavior:"auto", block:"start"});
 }
 async function showPublishedDetail(row) {

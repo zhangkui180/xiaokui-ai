@@ -4,9 +4,12 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 import threading
 import traceback
+import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -19,6 +22,10 @@ WEB = ROOT / "web"
 DOCS = ROOT / "docs"
 CACHE = ROOT / "cache"
 PORT = 8771
+OPEN_URLS = {
+    "local": "http://127.0.0.1:8771/",
+    "phone": "https://zhangkui180.github.io/xiaokui-ai/",
+}
 
 sys.path.insert(0, str(ROOT))
 from joy_factor import joy_factor
@@ -339,7 +346,8 @@ PAGE = r"""<!DOCTYPE html>
   #refreshMsg { margin:6px 0 0; font-size:12px; }
   .sub { color:var(--muted); margin:4px 0 0; font-size:13px; }
   .addrs { margin:6px 0 0; font-size:12px; color:var(--muted); }
-  .addrs a { color:inherit; text-decoration:none; }
+  .addrs a, .addrs button.addr { color:#1d4ed8; text-decoration:underline; cursor:pointer; }
+  .addrs button.addr { background:none; border:0; padding:0; font:inherit; }
   .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
   button { font:inherit; color:var(--ink); }
   .seg { display:flex; flex-wrap:wrap; gap:2px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:3px; }
@@ -403,8 +411,8 @@ PAGE = r"""<!DOCTYPE html>
   .metrics b { font-size:16px; font-weight:680; font-variant-numeric:tabular-nums; }
   .block-title { margin:16px 0 2px; font-size:12px; font-weight:650; letter-spacing:.06em; color:var(--muted); }
   .kline-wrap { position:relative; margin-top:8px; background:var(--soft); border:1px solid var(--line); border-radius:12px; padding:8px 4px 2px; min-height:180px; overflow:hidden; scroll-margin-top:96px; touch-action:pan-y; }
-  svg.kline { width:100%; max-width:100%; height:auto; aspect-ratio:640 / 232; display:block; cursor:grab; touch-action:pan-y; }
-  .kzoom { position:absolute; top:6px; right:6px; z-index:4; display:flex; flex-direction:column; gap:4px; touch-action:manipulation; }
+  svg.kline { width:100%; max-width:100%; height:360px; aspect-ratio:auto; display:block; cursor:grab; touch-action:pan-y; }
+  .kzoom { position:absolute; top:6px; left:6px; right:auto; z-index:4; display:flex; flex-direction:column; gap:4px; touch-action:manipulation; }
   .kzoom button { width:34px; height:34px; padding:0; border-radius:8px; border:1px solid var(--line); background:rgba(255,255,255,.94); font-size:20px; line-height:1; cursor:pointer; }
   svg.kline.dragging { cursor:grabbing; }
   .kline-cap { margin:6px 2px 0; font-size:12px; }
@@ -439,7 +447,7 @@ PAGE = r"""<!DOCTYPE html>
     <button class="refresh" id="refreshBtn" type="button">重新拉取</button>
   </div>
   <p class="sub" id="meta">正在读取筛选结果…</p>
-  <p class="addrs">电脑 <a href="http://127.0.0.1:8771/">127.0.0.1:8771</a> · 手机 <a href="https://zhangkui180.github.io/xiaokui-ai/">zhangkui180.github.io/xiaokui-ai</a></p>
+  <p class="addrs">电脑 <button type="button" class="addr" id="openLocal">127.0.0.1:8771</button> · 手机 <a href="https://zhangkui180.github.io/xiaokui-ai/" data-open="phone">zhangkui180.github.io/xiaokui-ai</a></p>
   <p class="muted" id="refreshMsg"></p>
 </header>
 <main>
@@ -477,6 +485,7 @@ const soeDeals = {
 };
 let selected = "";
 let chartBars = [];
+let floatShares = 0;
 let chartStart = 0;
 let chartSpan = 110;
 let localTool = false;
@@ -543,6 +552,16 @@ function hands(shares) {
   if (lots >= 10000) return (lots / 10000).toFixed(2) + "万手";
   return Math.round(lots) + "手";
 }
+function setFloatShares(floatMv, price) {
+  const mv = Number(floatMv);
+  const px = Number(price);
+  floatShares = mv > 0 && px > 0 ? mv / px : 0;
+}
+function turnoverText(volume) {
+  const vol = Number(volume) || 0;
+  if (!floatShares || vol <= 0) return "—";
+  return (vol / floatShares * 100).toFixed(2) + "%";
+}
 function px2(v) { return v == null || Number.isNaN(Number(v)) ? "—" : Number(v).toFixed(2); }
 function signed(v, digits) {
   if (v == null || Number.isNaN(Number(v))) return "—";
@@ -599,15 +618,9 @@ function paintChart() {
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
   svg.setAttribute("width", String(w));
   svg.setAttribute("height", String(h));
-  if (window.innerWidth < 980) {
-    svg.style.aspectRatio = "auto";
-    svg.style.width = "100%";
-    svg.style.height = "240px";
-  } else {
-    svg.style.aspectRatio = w + " / " + h;
-    svg.style.width = "100%";
-    svg.style.height = "auto";
-  }
+  svg.style.aspectRatio = "auto";
+  svg.style.width = "100%";
+  svg.style.height = narrow ? "240px" : "360px";
   svg.dataset.w = w;
   svg.dataset.h = h;
   svg.dataset.padx = padX;
@@ -652,7 +665,6 @@ function showBar(index) {
   const prev = b.prev == null ? null : Number(b.prev);
   const chg = prev ? Number(b.close) - prev : null;
   const pct = prev ? (Number(b.close) / prev - 1) * 100 : null;
-  const amp = prev ? (Number(b.high) - Number(b.low)) / prev * 100 : null;
   const cls = chg == null ? "" : chg > 0 ? "up" : chg < 0 ? "down" : "";
   tip.innerHTML = `<div class="kdate">${esc(b.date)}</div><div class="kline-cols"><div>`
     + tipRow("开盘", px2(b.open))
@@ -660,7 +672,7 @@ function showBar(index) {
     + tipRow("最低", px2(b.low), "down")
     + tipRow("收盘", px2(b.close), cls)
     + tipRow("涨跌", pct == null ? "—" : signed(pct, 2) + "%", cls)
-    + tipRow("振幅", amp == null ? "—" : amp.toFixed(2) + "%")
+    + tipRow("换手率", turnoverText(b.volume))
     + tipRow("成交量", hands(b.volume))
     + tipRow("成交额", money(b.amount))
     + `</div><div>`
@@ -852,8 +864,12 @@ function bindKline() {
 function revealChart() {
   const layout = document.querySelector(".layout");
   if (layout) layout.classList.add("picked");
-  if (window.innerWidth >= 980) return;
   const detail = document.getElementById("detail");
+  const chart = document.querySelector(".kline-wrap");
+  if (window.innerWidth >= 980) {
+    if (chart) chart.scrollIntoView({block:"nearest"});
+    return;
+  }
   if (detail) detail.scrollIntoView({behavior:"auto", block:"start"});
 }
 async function showPublishedDetail(row) {
@@ -864,6 +880,7 @@ async function showPublishedDetail(row) {
   const tags = (row.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("");
   const soe = soeDeals[row.code] ? `<p class="muted soe-note">${esc(soeDeals[row.code])}</p>` : "";
   const cap = (row.total_mv || row.float_mv) ? `<p class="muted capline">总市值 ${capText(row.total_mv)} · 流通 ${capText(row.float_mv)}</p>` : "";
+  setFloatShares(row.float_mv, row.price);
   detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.code)}</span><span>${esc(row.name || "")}</span><span class="score ${scoreCls}">${Number(row.score).toFixed(1)}</span></div>${cap}<p class="muted">${esc(row.date)}<span class="pill yes">符合入场</span></p></div></div>
     <div class="metrics">
       <div><span>收盘</span><b>${Number(row.price).toFixed(2)}</b></div>
@@ -905,6 +922,7 @@ async function openDetail(code, name) {
   const res = await fetch("/api/stock?code=" + encodeURIComponent(code));
   const data = await res.json();
   if (!data.ok) { detailEl.innerHTML = `<p>${esc(data.error || "没有数据")}</p>`; return; }
+  setFloatShares(data.float_mv, data.price);
   const pct = Number(data.pct);
   const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
   const sign = pct > 0 ? "+" : "";
@@ -1027,6 +1045,15 @@ async function boot() {
   const s = await fetch("/api/refresh").then(r => r.json()).catch(() => null);
   if (s && s.running) pollRefresh();
 }
+const openLocal = document.getElementById("openLocal");
+if (openLocal) openLocal.addEventListener("click", () => { fetch("/api/open?to=local"); });
+document.querySelectorAll(".addrs a").forEach(a => {
+  a.addEventListener("click", ev => {
+    if (location.hostname !== "127.0.0.1" && location.hostname !== "localhost") return;
+    ev.preventDefault();
+    fetch("/api/open?to=" + encodeURIComponent(a.dataset.open || ""));
+  });
+});
 boot().catch(() => { document.getElementById("meta").textContent = "结果没有读出来"; });
 </script>
 </body>
@@ -1057,6 +1084,30 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/refresh":
             body = json.dumps(scan_status(), ensure_ascii=False).encode("utf-8")
             self._send(200, body, "application/json; charset=utf-8")
+            return
+        if parsed.path == "/api/open":
+            key = (parse_qs(parsed.query).get("to") or [""])[0]
+            url = OPEN_URLS.get(key)
+            if not url:
+                self._send(404, b"not found", "text/plain; charset=utf-8")
+                return
+            try:
+                if key == "local" and os.name == "nt":
+                    edge = Path(os.environ.get("ProgramFiles(x86)", r"C:\Program Files (x86)")) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+                    if not edge.is_file():
+                        edge = Path(os.environ.get("ProgramFiles", r"C:\Program Files")) / "Microsoft" / "Edge" / "Application" / "msedge.exe"
+                    if edge.is_file():
+                        subprocess.Popen([str(edge), "--new-window", url])
+                    else:
+                        os.startfile(url)
+                elif os.name == "nt":
+                    os.startfile(url)
+                else:
+                    webbrowser.open(url)
+                body = b'{"ok":true}'
+                self._send(200, body, "application/json; charset=utf-8")
+            except Exception:
+                self._send(500, b'{"ok":false}', "application/json; charset=utf-8")
             return
         if parsed.path == "/api/stock":
             code = (parse_qs(parsed.query).get("code") or [""])[0]
