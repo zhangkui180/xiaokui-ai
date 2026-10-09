@@ -724,7 +724,11 @@ async function boot() {
   applyMeta(data);
   document.getElementById("hotbtn").textContent = "高度吻合";
   renderList();
-  if (!localTool) return;
+  if (!localTool) {
+    const first = (board.rows || [])[0];
+    if (first) openDetail(first.code, first.name);
+    return;
+  }
   const s = await fetch("/api/refresh").then(r => r.json()).catch(() => null);
   if (s && s.running) pollRefresh();
 }
