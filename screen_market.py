@@ -1,7 +1,7 @@
 # -*- coding: utf-8 -*-
 """用 Joy 因子扫描 6 / 3 / 0 开头的 A 股，并生成网页。
 
-6 开头是沪 A（不含 688 科创板），3 开头是深市创业板，0 开头是深 A 主板。
+6 开头是沪 A（不含 688 科创板），0 开头是深 A 主板。3 开头的创业板不扫。
 行情用腾讯前复权日线。结果写到 joy_factor/web/index.html。
 """
 
@@ -46,7 +46,6 @@ TAGS = [
 ]
 PREFIX_BOARD = {
     "6": "沪A",
-    "3": "创业板",
     "0": "深A主板",
 }
 
@@ -77,10 +76,10 @@ def _sina_node(node: str) -> list[dict]:
 
 
 def fetch_universe() -> list[dict]:
-    """拉取沪深 A 股代码，只保留 6 / 3 / 0 开头。"""
+    """拉取沪深 A 股代码，只保留 6 / 0 开头。创业板和科创板不扫。"""
     found: dict[str, dict] = {}
-    # sh_a 沪市主板，sz_a 深市主板，cyb 创业板。688 科创板不扫。
-    for node in ("sh_a", "sz_a", "cyb"):
+    # sh_a 沪市主板，sz_a 深市主板。688 科创板、3 开头创业板不扫。
+    for node in ("sh_a", "sz_a"):
         for item in _sina_node(node):
             code = str(item.get("code") or "").strip()
             name = str(item.get("name") or "").strip()
@@ -231,7 +230,6 @@ def render(matches: list[dict], meta: dict) -> None:
   <div class="bar">
     <button class="tab active" data-prefix="all">全部</button>
     <button class="tab" data-prefix="6">6 开头 · 沪A（不含688）</button>
-    <button class="tab" data-prefix="3">3 开头 · 创业板</button>
     <button class="tab" data-prefix="0">0 开头 · 深A主板</button>
     <input id="q" placeholder="搜代码或名称" />
     <div class="stats" id="stats"></div>
@@ -355,8 +353,8 @@ def scan_market(force: bool = False, on_progress=None) -> dict:
     universe = fetch_universe()
     if not universe:
         raise RuntimeError("没有拉到股票列表")
-    counts = {k: sum(1 for s in universe if s["prefix"] == k) for k in "630"}
-    print(f"universe {len(universe)} 6={counts['6']} 3={counts['3']} 0={counts['0']}", flush=True)
+    counts = {k: sum(1 for s in universe if s["prefix"] == k) for k in "60"}
+    print(f"universe {len(universe)} 6={counts['6']} 0={counts['0']}", flush=True)
     matches = []
     dates = []
     failed = 0

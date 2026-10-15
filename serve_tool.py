@@ -10,6 +10,7 @@ import sys
 import threading
 import traceback
 import webbrowser
+from datetime import date, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
@@ -21,7 +22,9 @@ ROOT = Path(__file__).resolve().parent
 WEB = ROOT / "web"
 DOCS = ROOT / "docs"
 CACHE = ROOT / "cache"
+BOARD_DAYS = WEB / "board_days.json"
 PORT = 8771
+STREAK_DAYS = 5
 OPEN_URLS = {
     "local": "http://127.0.0.1:8771/",
     "phone": "https://zhangkui180.github.io/xiaokui-ai/",
@@ -152,40 +155,135 @@ def attach_market_caps(rows: list[dict]) -> None:
         row["float_mv"] = circulating
 
 
+def _board_codes(rows: list[dict]) -> list[str]:
+    codes = []
+    for row in rows or []:
+        code = "".join(ch for ch in str(row.get("code") or "") if ch.isdigit())[:6]
+        if len(code) == 6 and code not in codes:
+            codes.append(code)
+    return codes
+
+
+def load_board_days() -> dict[str, list[str]]:
+    if not BOARD_DAYS.exists():
+        return {}
+    try:
+        data = json.loads(BOARD_DAYS.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    days = data.get("days") if isinstance(data, dict) else None
+    if not isinstance(days, dict):
+        return {}
+    cleaned = {}
+    for day, codes in days.items():
+        if isinstance(codes, list):
+            cleaned[str(day)] = _board_codes([{"code": code} for code in codes])
+    return cleaned
+
+
+def save_board_days(days: dict[str, list[str]]) -> None:
+    dates = sorted(days)[-STREAK_DAYS:]
+    kept = {day: days[day] for day in dates}
+    BOARD_DAYS.parent.mkdir(exist_ok=True)
+    BOARD_DAYS.write_text(json.dumps({"days": kept}, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def remember_board(asof: str, rows: list[dict]) -> dict[str, list[str]]:
+    days = load_board_days()
+    if asof:
+        days[asof] = _board_codes(rows)
+        save_board_days(days)
+    return load_board_days()
+
+
+def _signal_date(text: str) -> date | None:
+    try:
+        year, month, day = str(text).split("-")
+        return date(int(year), int(month), int(day))
+    except (TypeError, ValueError):
+        return None
+
+
+def _consecutive_sessions(older: date, newer: date) -> bool:
+    """中间只隔周末或国庆休市，才算连续两个信号日。"""
+    if newer <= older:
+        return False
+    closed = {date(2026, 10, day) for day in range(1, 8)}
+    cursor = older + timedelta(days=1)
+    while cursor < newer:
+        if cursor.weekday() < 5 and cursor not in closed:
+            return False
+        cursor += timedelta(days=1)
+    return True
+
+
+def streak_map(days: dict[str, list[str]]) -> dict[str, int]:
+    """从最近一个信号日往前数，最多 5 个信号日，连续在榜才计入。"""
+    chosen = []
+    for day in sorted(days)[-STREAK_DAYS:]:
+        parsed = _signal_date(day)
+        if parsed is not None:
+            chosen.append((parsed, set(days[day])))
+    if not chosen:
+        return {}
+    streaks = {}
+    for code in chosen[-1][1]:
+        count = 0
+        for index in range(len(chosen) - 1, -1, -1):
+            if code not in chosen[index][1]:
+                break
+            if index < len(chosen) - 1 and not _consecutive_sessions(chosen[index][0], chosen[index + 1][0]):
+                break
+            count += 1
+        streaks[code] = min(count, STREAK_DAYS)
+    return streaks
+
+
+def attach_streaks(data: dict) -> dict:
+    meta = data.get("meta") or {}
+    asof = str(meta.get("asof") or "")
+    rows = data.get("rows") or []
+    days = remember_board(asof, rows) if asof else load_board_days()
+    streaks = streak_map(days)
+    for row in rows:
+        code = "".join(ch for ch in str(row.get("code") or "") if ch.isdigit())[:6]
+        row["days"] = streaks.get(code, 1 if code else 0)
+    return data
+
+
 def load_board() -> dict:
     path = WEB / "results.json"
     if path.exists():
-        return _without_star(json.loads(path.read_text(encoding="utf-8")))
-    html = (WEB / "index.html").read_text(encoding="utf-8")
-    marker = '<script id="payload" type="application/json">'
-    start = html.find(marker)
-    if start < 0:
-        return {"meta": {}, "rows": []}
-    start += len(marker)
-    end = html.find("</script>", start)
-    data = json.loads(html[start:end])
-    return _without_star(data)
+        data = _without_star(json.loads(path.read_text(encoding="utf-8")))
+    else:
+        html = (WEB / "index.html").read_text(encoding="utf-8")
+        marker = '<script id="payload" type="application/json">'
+        start = html.find(marker)
+        if start < 0:
+            return {"meta": {}, "rows": []}
+        start += len(marker)
+        end = html.find("</script>", start)
+        data = _without_star(json.loads(html[start:end]))
+    return attach_streaks(data)
 
 
 def _without_star(data: dict) -> dict:
-    """688 开头是科创板，不放进列表，扫描数字里也不再计入。
+    """688 开头是科创板，3 开头是创业板，都不放进列表。
     简称带 ST、*ST 或退的是退市风险、立案后的风险警示，也不进名单。"""
     rows = []
     for row in data.get("rows") or []:
         code = str(row.get("code") or "")
-        if code.startswith("688"):
+        if code.startswith("688") or code.startswith("3"):
             continue
         if row.get("st") or is_exchange_risk(row.get("name")):
             continue
         rows.append(row)
     meta = dict(data.get("meta") or {})
     counts = dict(meta.get("counts") or {})
-    star_n = sum(1 for _ in CACHE.glob("688*.csv"))
-    if star_n and counts.get("6"):
-        counts["6"] = max(0, int(counts["6"]) - star_n)
-        if meta.get("scanned"):
-            meta["scanned"] = max(0, int(meta["scanned"]) - star_n)
-        meta["counts"] = counts
+    cyb_n = int(counts.pop("3", 0) or 0)
+    if cyb_n and meta.get("scanned"):
+        meta["scanned"] = max(0, int(meta["scanned"]) - cyb_n)
+    meta["counts"] = counts
     return {"meta": meta, "rows": rows}
 
 
@@ -382,6 +480,7 @@ PAGE = r"""<!DOCTYPE html>
   .row1, .row2 { justify-content:space-between; gap:12px; }
   .id { gap:8px; min-width:0; max-width:100%; }
   .name { flex:0 1 auto; min-width:0; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .days { flex:none; font-size:12px; font-weight:650; color:#9a3412; background:#fff7ed; border-radius:999px; padding:0 6px; }
   .code { font-weight:700; font-variant-numeric:tabular-nums; letter-spacing:-0.02em; }
   .score {
     flex:none; min-width:46px; text-align:center; font-variant-numeric:tabular-nums; font-weight:700;
@@ -416,10 +515,10 @@ PAGE = r"""<!DOCTYPE html>
   .kzoom button { width:34px; height:34px; padding:0; border-radius:8px; border:1px solid var(--line); background:rgba(255,255,255,.94); font-size:20px; line-height:1; cursor:pointer; }
   svg.kline.dragging { cursor:grabbing; }
   .kline-cap { margin:6px 2px 0; font-size:12px; }
-  .kline-tip { position:absolute; z-index:3; width:max-content; max-width:calc(100% - 8px); padding:8px 10px; background:rgba(255,255,255,.98); border:1px solid var(--line); border-radius:10px; font-size:12px; line-height:1.4; pointer-events:none; box-shadow:0 10px 28px rgba(28,25,23,.12); }
-  .kline-tip .kdate { font-weight:700; margin-bottom:4px; }
-  .kline-cols { display:flex; gap:16px; }
-  .kline-row { display:flex; justify-content:space-between; gap:12px; font-variant-numeric:tabular-nums; }
+  .kline-tip { position:absolute; z-index:3; left:auto; right:30%; top:8px; width:max-content; max-width:210px; padding:4px 6px; background:rgba(255,255,255,.96); border:1px solid var(--line); border-radius:8px; font-size:11px; line-height:1.25; pointer-events:none; box-shadow:0 6px 16px rgba(28,25,23,.1); }
+  .kline-tip .kdate { font-weight:700; margin-bottom:2px; }
+  .kline-cols { display:flex; gap:8px; }
+  .kline-row { display:flex; justify-content:space-between; gap:6px; font-variant-numeric:tabular-nums; }
   .flag { padding:10px 0; border-top:1px solid var(--line); }
   .flag-h { display:flex; justify-content:space-between; align-items:center; gap:8px; }
   .flag b { font-weight:650; }
@@ -434,7 +533,7 @@ PAGE = r"""<!DOCTYPE html>
   }
   @media (max-width:979px) {
     .kzoom { left:6px; right:auto; flex-direction:row; }
-    .kline-tip { left:4px; top:46px; max-width:calc(100% - 8px); padding:4px 6px; font-size:11px; line-height:1.25; }
+    .kline-tip { left:4px; right:auto; top:46px; max-width:calc(100% - 8px); padding:4px 6px; font-size:11px; line-height:1.25; }
     .kline-tip .kline-cols { gap:8px; }
     .kline-tip .kline-row { gap:6px; }
   }
@@ -455,7 +554,6 @@ PAGE = r"""<!DOCTYPE html>
     <div class="seg">
       <button class="tab active" data-prefix="all">全部</button>
       <button class="tab" data-prefix="6">沪A</button>
-      <button class="tab" data-prefix="3">创业板</button>
       <button class="tab" data-prefix="0">深A主板</button>
     </div>
     <button class="hotbtn" id="hotbtn" type="button">高度吻合</button>
@@ -500,6 +598,7 @@ function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','
 function shown() {
   return board.rows.filter(r => {
     const name = String(r.name || "");
+    if (String(r.code || "").startsWith("3")) return false;
     if (r.st || name.toUpperCase().includes("ST") || name.includes("退")) return false;
     if (soeOnly) return !!soeDeals[r.code];
     if (hotOnly) return coreTags(r).length >= 2;
@@ -522,7 +621,7 @@ function renderList() {
     const st = r.st ? `<span class="st">风险</span>` : "";
     const scoreCls = Number(r.score) >= 30 ? "hi" : Number(r.score) >= 22 ? "mid" : "lo";
     return `<button class="card ${r.code === selected ? "selected" : ""}" data-code="${r.code}">
-      <div class="row1"><span class="id"><span class="code">${r.code}</span><span class="name">${esc(r.name)}</span><span class="score ${scoreCls}">${Number(r.score).toFixed(1)}</span>${st}</span></div>
+      <div class="row1"><span class="id"><span class="code">${r.code}</span><span class="name">${esc(r.name)}</span>${dayMark(r.days)}<span class="score ${scoreCls}">${Number(r.score).toFixed(1)}</span>${st}</span></div>
       ${(r.total_mv || r.float_mv) ? `<div class="muted capline">总市值 ${capText(r.total_mv)} · 流通 ${capText(r.float_mv)}</div>` : ""}
       <div class="row2"><span class="muted">${esc(r.board)} · ${Number(r.price).toFixed(2)}</span><span class="${cls}">${sign}${pct.toFixed(2)}%</span></div>
       <div class="tags">${tags}</div>
@@ -533,6 +632,11 @@ function renderList() {
     const row = board.rows.find(r => r.code === btn.dataset.code);
     openDetail(btn.dataset.code, row ? row.name : btn.dataset.code);
   });
+}
+function dayMark(days) {
+  const n = Number(days) || 0;
+  if (n < 2) return "";
+  return `<span class="days">${Math.min(n, 5)}天</span>`;
 }
 function capText(n) {
   n = Number(n);
@@ -616,6 +720,7 @@ function paintChart() {
   }).join("");
   const split = padY + priceH + gap / 2;
   svg.setAttribute("viewBox", `0 0 ${w} ${h}`);
+  svg.setAttribute("preserveAspectRatio", "none");
   svg.setAttribute("width", String(w));
   svg.setAttribute("height", String(h));
   svg.style.aspectRatio = "auto";
@@ -640,7 +745,21 @@ function paintChart() {
 function tipRow(label, value, cls) {
   return `<div class="kline-row"><span class="muted">${label}</span><span class="${cls || ""}">${value}</span></div>`;
 }
-function showBar(index) {
+function svgPoint(svg, clientX, clientY) {
+  const pt = svg.createSVGPoint();
+  pt.x = clientX;
+  pt.y = clientY;
+  const ctm = svg.getScreenCTM();
+  if (!ctm) {
+    const rect = svg.getBoundingClientRect();
+    return {
+      x: ((clientX - rect.left) / (rect.width || 1)) * Number(svg.dataset.w || 1),
+      y: ((clientY - rect.top) / (rect.height || 1)) * Number(svg.dataset.h || 1)
+    };
+  }
+  return pt.matrixTransform(ctm.inverse());
+}
+function showBar(index, pointer) {
   const svg = document.querySelector("svg.kline");
   const tip = document.getElementById("kline-tip");
   if (!svg || !tip || !chartBars.length) return;
@@ -652,8 +771,12 @@ function showBar(index) {
   const count = Number(svg.dataset.count) || 1;
   const local = Math.max(0, Math.min(count - 1, i - start));
   const slot = (w - padX * 2) / count;
-  const x = padX + local * slot + slot / 2;
-  const y = padY + (1 - (Number(b.close) - min) / span) * priceH;
+  let x = padX + local * slot + slot / 2;
+  let y = padY + (1 - (Number(b.close) - min) / span) * priceH;
+  if (pointer) {
+    x = Math.max(0, Math.min(w, pointer.x));
+    y = Math.max(0, Math.min(h, pointer.y));
+  }
   const vline = document.getElementById("kline-v");
   const hline = document.getElementById("kline-h");
   vline.setAttribute("x1", x.toFixed(1)); vline.setAttribute("x2", x.toFixed(1));
@@ -686,17 +809,14 @@ function showBar(index) {
     + `</div></div>`;
   tip.hidden = false;
   if (window.innerWidth < 980) {
-    tip.style.left = "4px";
+    tip.style.left = "6px";
+    tip.style.right = "auto";
     tip.style.top = "46px";
-    return;
+  } else {
+    tip.style.left = "auto";
+    tip.style.right = "30%";
+    tip.style.top = "8px";
   }
-  const wrap = svg.parentElement.getBoundingClientRect();
-  const svgBox = svg.getBoundingClientRect();
-  const tipW = tip.offsetWidth || 180;
-  let left = (svgBox.left - wrap.left) + (x / w) * svgBox.width + 12;
-  if (left + tipW > wrap.width - 4) left = (svgBox.left - wrap.left) + (x / w) * svgBox.width - tipW - 12;
-  tip.style.left = Math.max(4, left) + "px";
-  tip.style.top = "4px";
 }
 function hideBar() {
   const tip = document.getElementById("kline-tip");
@@ -706,13 +826,17 @@ function hideBar() {
   if (vline) vline.setAttribute("visibility", "hidden");
   if (hline) hline.setAttribute("visibility", "hidden");
 }
-function barIndexAt(svg, clientX) {
+function barIndexAt(svg, clientX, clientY) {
   const rect = svg.getBoundingClientRect();
+  const p = svgPoint(svg, clientX, clientY == null ? rect.top : clientY);
   const w = Number(svg.dataset.w), padX = Number(svg.dataset.padx);
   const count = Number(svg.dataset.count) || 1;
-  const x = (clientX - rect.left) / rect.width * w;
   const slot = (w - padX * 2) / count;
-  return (Number(svg.dataset.start) || 0) + Math.floor((x - padX) / slot);
+  return (Number(svg.dataset.start) || 0) + Math.floor((p.x - padX) / slot);
+}
+function showPointer(svg, ev) {
+  const p = svgPoint(svg, ev.clientX, ev.clientY);
+  showBar(barIndexAt(svg, ev.clientX, ev.clientY), p);
 }
 function bindKline() {
   const svg = document.getElementById("kline-svg");
@@ -751,7 +875,7 @@ function bindKline() {
     drag = { x: ev.clientX, y: ev.clientY, start: chartStart, moved: false, touch: ev.pointerType === "touch", mode: "" };
     if (drag.touch) {
       tipHold = true;
-      showBar(barIndexAt(svg, ev.clientX));
+      showPointer(svg, ev);
     } else {
       tipHold = false;
       svg.classList.add("dragging");
@@ -785,7 +909,7 @@ function bindKline() {
       return;
     }
     if (!drag) {
-      if (ev.pointerType !== "touch") showBar(barIndexAt(svg, ev.clientX));
+      if (ev.pointerType !== "touch") showPointer(svg, ev);
       return;
     }
     const dx = ev.clientX - drag.x;
@@ -793,7 +917,7 @@ function bindKline() {
     if (drag.touch) {
       if (!drag.mode) {
         if (Math.hypot(dx, dy) < 10) {
-          showBar(barIndexAt(svg, ev.clientX));
+          showPointer(svg, ev);
           return;
         }
         drag.mode = Math.abs(dy) > 16 && Math.abs(dy) > Math.abs(dx) * 1.4 ? "scroll" : "read";
@@ -805,7 +929,7 @@ function bindKline() {
       }
       if (ev.cancelable) ev.preventDefault();
       try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
-      showBar(barIndexAt(svg, ev.clientX));
+      showPointer(svg, ev);
       return;
     }
     if (Math.abs(dx) > 4) drag.moved = true;
@@ -881,7 +1005,7 @@ async function showPublishedDetail(row) {
   const soe = soeDeals[row.code] ? `<p class="muted soe-note">${esc(soeDeals[row.code])}</p>` : "";
   const cap = (row.total_mv || row.float_mv) ? `<p class="muted capline">总市值 ${capText(row.total_mv)} · 流通 ${capText(row.float_mv)}</p>` : "";
   setFloatShares(row.float_mv, row.price);
-  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.code)}</span><span>${esc(row.name || "")}</span><span class="score ${scoreCls}">${Number(row.score).toFixed(1)}</span></div>${cap}<p class="muted">${esc(row.date)}<span class="pill yes">符合入场</span></p></div></div>
+  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.code)}</span><span>${esc(row.name || "")}</span>${dayMark(row.days)}<span class="score ${scoreCls}">${Number(row.score).toFixed(1)}</span></div>${cap}<p class="muted">${esc(row.date)}<span class="pill yes">符合入场</span></p></div></div>
     <div class="metrics">
       <div><span>收盘</span><b>${Number(row.price).toFixed(2)}</b></div>
       <div><span>涨跌</span><b class="${cls}">${sign}${pct.toFixed(2)}%</b></div>
@@ -928,7 +1052,7 @@ async function openDetail(code, name) {
   const sign = pct > 0 ? "+" : "";
   const scoreCls = Number(data.score) >= 30 ? "hi" : Number(data.score) >= 22 ? "mid" : "lo";
   const flags = (data.flags || []).slice().sort((a, b) => Number(b.on) - Number(a.on)).map(f => `<div class="flag ${f.on ? "on" : "off"}"><div class="flag-h"><b>${esc(f.label)}</b><span class="state">${f.on ? "命中" : "未中"}</span></div><div class="muted">${esc(f.text)}</div></div>`).join("");
-  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(data.code)}</span><span>${esc(name || "")}</span><span class="score ${scoreCls}">${Number(data.score).toFixed(1)}</span></div><p class="muted capline">总市值 ${capText(data.total_mv)} · 流通 ${capText(data.float_mv)}</p><p class="muted">${esc(data.date)}<span class="pill ${data.entry ? "yes" : "no"}">${data.entry ? "符合入场" : "不符合入场"}</span></p></div></div>
+  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(data.code)}</span><span>${esc(name || "")}</span>${dayMark(data.days)}<span class="score ${scoreCls}">${Number(data.score).toFixed(1)}</span></div><p class="muted capline">总市值 ${capText(data.total_mv)} · 流通 ${capText(data.float_mv)}</p><p class="muted">${esc(data.date)}<span class="pill ${data.entry ? "yes" : "no"}">${data.entry ? "符合入场" : "不符合入场"}</span></p></div></div>
     <div class="metrics">
       <div><span>收盘</span><b>${Number(data.price).toFixed(2)}</b></div>
       <div><span>涨跌</span><b class="${cls}">${sign}${pct.toFixed(2)}%</b></div>
@@ -973,7 +1097,7 @@ document.getElementById("soebtn").onclick = () => {
 function applyMeta(data) {
   const m = data.meta || {};
   const c = m.counts || {};
-  document.getElementById("meta").textContent = `信号日 ${m.asof || "—"} · 扫描 ${m.scanned || 0} 只（沪A ${c["6"] || 0} / 创业板 ${c["3"] || 0} / 深A主板 ${c["0"] || 0}）· 入选 ${data.rows.length} 只`;
+  document.getElementById("meta").textContent = `信号日 ${m.asof || "—"} · 扫描 ${m.scanned || 0} 只（沪A ${c["6"] || 0} / 深A主板 ${c["0"] || 0}）· 入选 ${data.rows.length} 只`;
 }
 function refreshText(s) {
   if (s.error) return s.error;
@@ -1166,7 +1290,7 @@ def sync_pages() -> None:
     src = WEB / "results.json"
     if src.exists():
         payload = json.loads(src.read_text(encoding="utf-8"))
-        payload = _without_star(payload)
+        payload = attach_streaks(_without_star(payload))
         text = json.dumps(payload, ensure_ascii=False)
         src.write_text(text, encoding="utf-8")
         (DOCS / "results.json").write_text(text, encoding="utf-8")
