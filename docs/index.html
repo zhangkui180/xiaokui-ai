@@ -204,7 +204,7 @@ function renderList() {
     const scoreCls = Number(r.score) >= 30 ? "hi" : Number(r.score) >= 22 ? "mid" : "lo";
     return `<button class="card ${r.code === selected ? "selected" : ""}" data-code="${r.code}">
       <div class="row1"><span class="id"><span class="code">${r.code}</span><span class="name">${esc(r.name)}</span>${dayMark(r.days)}<span class="score ${scoreCls}">${Number(r.score).toFixed(1)}</span>${st}</span></div>
-      ${(r.total_mv || r.float_mv) ? `<div class="muted capline">总市值 ${capText(r.total_mv)} · 流通 ${capText(r.float_mv)}</div>` : ""}
+      <div class="muted capline">总市值 ${capText(r.total_mv)} · 流通市值 ${capText(r.float_mv)}</div>
       <div class="row2"><span class="muted">${esc(r.board)} · ${Number(r.price).toFixed(2)}</span><span class="${cls}">${sign}${pct.toFixed(2)}%</span></div>
       <div class="tags">${tags}</div>
       ${soeNote}
@@ -585,7 +585,7 @@ async function showPublishedDetail(row) {
   const scoreCls = Number(row.score) >= 30 ? "hi" : Number(row.score) >= 22 ? "mid" : "lo";
   const tags = (row.tags || []).map(t => `<span class="tag">${esc(t)}</span>`).join("");
   const soe = soeDeals[row.code] ? `<p class="muted soe-note">${esc(soeDeals[row.code])}</p>` : "";
-  const cap = (row.total_mv || row.float_mv) ? `<p class="muted capline">总市值 ${capText(row.total_mv)} · 流通 ${capText(row.float_mv)}</p>` : "";
+  const cap = `<p class="muted capline">总市值 ${capText(row.total_mv)} · 流通市值 ${capText(row.float_mv)}</p>`;
   setFloatShares(row.float_mv, row.price);
   detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.code)}</span><span>${esc(row.name || "")}</span>${dayMark(row.days)}<span class="score ${scoreCls}">${Number(row.score).toFixed(1)}</span></div>${cap}<p class="muted">${esc(row.date)}<span class="pill yes">符合入场</span></p></div></div>
     <div class="metrics">
@@ -634,7 +634,7 @@ async function openDetail(code, name) {
   const sign = pct > 0 ? "+" : "";
   const scoreCls = Number(data.score) >= 30 ? "hi" : Number(data.score) >= 22 ? "mid" : "lo";
   const flags = (data.flags || []).slice().sort((a, b) => Number(b.on) - Number(a.on)).map(f => `<div class="flag ${f.on ? "on" : "off"}"><div class="flag-h"><b>${esc(f.label)}</b><span class="state">${f.on ? "命中" : "未中"}</span></div><div class="muted">${esc(f.text)}</div></div>`).join("");
-  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(data.code)}</span><span>${esc(name || "")}</span>${dayMark(data.days)}<span class="score ${scoreCls}">${Number(data.score).toFixed(1)}</span></div><p class="muted capline">总市值 ${capText(data.total_mv)} · 流通 ${capText(data.float_mv)}</p><p class="muted">${esc(data.date)}<span class="pill ${data.entry ? "yes" : "no"}">${data.entry ? "符合入场" : "不符合入场"}</span></p></div></div>
+  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(data.code)}</span><span>${esc(name || "")}</span>${dayMark(data.days)}<span class="score ${scoreCls}">${Number(data.score).toFixed(1)}</span></div><p class="muted capline">总市值 ${capText(data.total_mv)} · 流通市值 ${capText(data.float_mv)}</p><p class="muted">${esc(data.date)}<span class="pill ${data.entry ? "yes" : "no"}">${data.entry ? "符合入场" : "不符合入场"}</span></p></div></div>
     <div class="metrics">
       <div><span>收盘</span><b>${Number(data.price).toFixed(2)}</b></div>
       <div><span>涨跌</span><b class="${cls}">${sign}${pct.toFixed(2)}%</b></div>
