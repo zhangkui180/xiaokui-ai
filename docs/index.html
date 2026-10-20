@@ -218,7 +218,7 @@ function renderList() {
 function dayMark(days) {
   const n = Number(days) || 0;
   if (n < 2) return "";
-  return `<span class="days">${Math.min(n, 5)}天</span>`;
+  return `<span class="days">${Math.min(n, 10)}天</span>`;
 }
 function capText(n) {
   n = Number(n);
@@ -371,24 +371,27 @@ function showBar(index, pointer) {
   const chg = prev ? Number(b.close) - prev : null;
   const pct = prev ? (Number(b.close) / prev - 1) * 100 : null;
   const cls = chg == null ? "" : chg > 0 ? "up" : chg < 0 ? "down" : "";
-  tip.innerHTML = `<div class="kdate">${esc(b.date)}</div><div class="kline-cols"><div>`
-    + tipRow("开盘", px2(b.open))
-    + tipRow("最高", px2(b.high), "up")
-    + tipRow("最低", px2(b.low), "down")
-    + tipRow("收盘", px2(b.close), cls)
-    + tipRow("涨跌", pct == null ? "—" : signed(pct, 2) + "%", cls)
-    + tipRow("换手率", turnoverText(b.volume))
-    + tipRow("成交量", hands(b.volume))
-    + tipRow("成交额", money(b.amount))
-    + `</div><div>`
-    + tipRow("MA5", px2(b.ma5))
-    + tipRow("MA10", px2(b.ma10))
-    + tipRow("MA20", px2(b.ma20))
-    + tipRow("MA40", px2(b.ma40))
-    + tipRow("MA160", px2(b.ma160))
-    + tipRow("DIF", b.dif == null ? "—" : Number(b.dif).toFixed(3))
-    + tipRow("DEA", b.dea == null ? "—" : Number(b.dea).toFixed(3))
-    + `</div></div>`;
+  if (i !== tipIndex) {
+    tipIndex = i;
+    tip.innerHTML = `<div class="kdate">${esc(b.date)}</div><div class="kline-cols"><div>`
+      + tipRow("开盘", px2(b.open))
+      + tipRow("最高", px2(b.high), "up")
+      + tipRow("最低", px2(b.low), "down")
+      + tipRow("收盘", px2(b.close), cls)
+      + tipRow("涨跌", pct == null ? "—" : signed(pct, 2) + "%", cls)
+      + tipRow("换手率", turnoverText(b.volume))
+      + tipRow("成交量", hands(b.volume))
+      + tipRow("成交额", money(b.amount))
+      + `</div><div>`
+      + tipRow("MA5", px2(b.ma5))
+      + tipRow("MA10", px2(b.ma10))
+      + tipRow("MA20", px2(b.ma20))
+      + tipRow("MA40", px2(b.ma40))
+      + tipRow("MA160", px2(b.ma160))
+      + tipRow("DIF", b.dif == null ? "—" : Number(b.dif).toFixed(3))
+      + tipRow("DEA", b.dea == null ? "—" : Number(b.dea).toFixed(3))
+      + `</div></div>`;
+  }
   tip.hidden = false;
   if (window.innerWidth < 980) {
     tip.style.left = "6px";
@@ -404,6 +407,7 @@ function hideBar() {
   const tip = document.getElementById("kline-tip");
   const vline = document.getElementById("kline-v");
   const hline = document.getElementById("kline-h");
+  tipIndex = -1;
   if (tip) tip.hidden = true;
   if (vline) vline.setAttribute("visibility", "hidden");
   if (hline) hline.setAttribute("visibility", "hidden");
@@ -416,9 +420,23 @@ function barIndexAt(svg, clientX, clientY) {
   const slot = (w - padX * 2) / count;
   return (Number(svg.dataset.start) || 0) + Math.floor((p.x - padX) / slot);
 }
+let tipIndex = -1;
+let paintQueued = false;
+function schedulePaint() {
+  if (paintQueued) return;
+  paintQueued = true;
+  requestAnimationFrame(() => {
+    paintQueued = false;
+    paintChart();
+  });
+}
 function showPointer(svg, ev) {
   const p = svgPoint(svg, ev.clientX, ev.clientY);
-  showBar(barIndexAt(svg, ev.clientX, ev.clientY), p);
+  const w = Number(svg.dataset.w), padX = Number(svg.dataset.padx);
+  const count = Number(svg.dataset.count) || 1;
+  const slot = (w - padX * 2) / count;
+  const index = (Number(svg.dataset.start) || 0) + Math.floor((p.x - padX) / slot);
+  showBar(index, p);
 }
 function bindKline() {
   const svg = document.getElementById("kline-svg");
@@ -441,9 +459,6 @@ function bindKline() {
   svg.addEventListener("pointerdown", ev => {
     if (ev.pointerType === "mouse" && ev.button !== 0) return;
     pts.set(ev.pointerId, { x: ev.clientX, y: ev.clientY });
-    if (ev.pointerType !== "touch") {
-      try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
-    }
     if (pts.size >= 2) {
       drag = null;
       svg.classList.remove("dragging");
@@ -460,7 +475,7 @@ function bindKline() {
       showPointer(svg, ev);
     } else {
       tipHold = false;
-      svg.classList.add("dragging");
+      showPointer(svg, ev);
     }
   });
   svg.addEventListener("pointermove", ev => {
@@ -485,7 +500,7 @@ function bindKline() {
         const clamped = Math.max(0, Math.min(next, chartBars.length - countFit));
         if (clamped !== chartStart) {
           chartStart = clamped;
-          paintChart();
+          schedulePaint();
         }
       }
       return;
@@ -514,10 +529,16 @@ function bindKline() {
       showPointer(svg, ev);
       return;
     }
-    if (Math.abs(dx) > 4) drag.moved = true;
-    if (!drag.moved) return;
-    svg.classList.add("dragging");
-    hideTip();
+    if (!drag.moved) {
+      if (Math.hypot(dx, dy) < 12) {
+        showPointer(svg, ev);
+        return;
+      }
+      drag.moved = true;
+      try { svg.setPointerCapture(ev.pointerId); } catch (e) {}
+      svg.classList.add("dragging");
+      hideTip();
+    }
     const rect = svg.getBoundingClientRect();
     const count = Number(svg.dataset.count) || 1;
     const next = drag.start - Math.round(dx / (rect.width / count));
@@ -525,7 +546,7 @@ function bindKline() {
     const clamped = Math.max(0, Math.min(next, chartBars.length - countFit));
     if (clamped !== chartStart) {
       chartStart = clamped;
-      paintChart();
+      schedulePaint();
     }
   });
   const endPointer = ev => {
@@ -554,7 +575,7 @@ function bindKline() {
     const next = chartStart + (ev.deltaY > 0 ? -8 : 8);
     chartStart = Math.max(0, Math.min(next, chartBars.length - countFit));
     hideBar();
-    paintChart();
+    schedulePaint();
   }, { passive: false });
   const zoomIn = document.getElementById("kzoom-in");
   const zoomOut = document.getElementById("kzoom-out");
@@ -624,7 +645,10 @@ async function openDetail(code, name) {
     await showPublishedDetail(row);
     return;
   }
-  detailEl.innerHTML = `<p class="muted">正在计算 ${esc(code)} …</p>`;
+  const known = board.rows.find(r => r.code === code);
+  detailEl.innerHTML = known
+    ? `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(code)}</span><span>${esc(name || known.name || "")}</span>${dayMark(known.days)}</div><p class="muted capline">总市值 ${capText(known.total_mv)} · 流通市值 ${capText(known.float_mv)}</p><p class="muted">正在读取日K…</p></div></div>`
+    : `<p class="muted">正在读取 ${esc(code)} 的日K…</p>`;
   const res = await fetch("/api/stock?code=" + encodeURIComponent(code));
   const data = await res.json();
   if (!data.ok) { detailEl.innerHTML = `<p>${esc(data.error || "没有数据")}</p>`; return; }
@@ -707,6 +731,20 @@ async function pollRefresh() {
   applyMeta(data);
   renderList();
   msg.textContent = `已按因子更新，信号日 ${s.asof || "—"}，入选 ${data.rows.length} 只`;
+  if ((data.rows || []).some(r => !Number(r.total_mv) || !Number(r.float_mv))) {
+    const pullCaps = async (wait) => {
+      await new Promise(resolve => setTimeout(resolve, wait));
+      try {
+        const again = await fetch("/api/list").then(r => r.json());
+        if (!again || !Array.isArray(again.rows) || !again.rows.length) return;
+        board = again;
+        applyMeta(again);
+        renderList();
+      } catch (e) {}
+    };
+    pullCaps(2000);
+    pullCaps(6000);
+  }
 }
 document.getElementById("refreshBtn").onclick = async () => {
   const btn = document.getElementById("refreshBtn");
@@ -750,6 +788,20 @@ async function boot() {
   applyMeta(data);
   document.getElementById("hotbtn").textContent = "高度吻合";
   renderList();
+  if (localTool && (board.rows || []).some(r => !Number(r.total_mv) || !Number(r.float_mv))) {
+    const pullCaps = async (wait) => {
+      await new Promise(resolve => setTimeout(resolve, wait));
+      try {
+        const again = await fetch("/api/list").then(r => r.json());
+        if (!again || !Array.isArray(again.rows) || !again.rows.length) return;
+        board = again;
+        applyMeta(again);
+        renderList();
+      } catch (e) {}
+    };
+    pullCaps(2000);
+    pullCaps(6000);
+  }
   if (!localTool) {
     const first = (board.rows || [])[0];
     if (first) openDetail(first.code, first.name);
