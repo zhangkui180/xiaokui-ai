@@ -29,6 +29,8 @@
   .addrs a, .addrs button.addr { color:#1d4ed8; text-decoration:underline; cursor:pointer; }
   .addrs button.addr { background:none; border:0; padding:0; font:inherit; }
   .toolbar { display:flex; flex-wrap:wrap; gap:8px; align-items:center; margin:0 0 14px; }
+  .datebar { display:flex; align-items:center; gap:8px; }
+  .datelabel { font-size:12px; color:var(--muted); }
   button { font:inherit; color:var(--ink); }
   .seg { display:flex; flex-wrap:wrap; gap:2px; background:var(--card); border:1px solid var(--line); border-radius:12px; padding:3px; }
   .seg button, .hotbtn {
@@ -133,6 +135,10 @@
 </header>
 <main>
   <div class="toolbar">
+    <div class="datebar" id="dateBar" hidden>
+      <span class="datelabel">信号日</span>
+      <div class="seg" id="dateSeg"></div>
+    </div>
     <div class="seg">
       <button class="tab active" data-prefix="all">全部</button>
       <button class="tab" data-prefix="6">沪A</button>
@@ -151,6 +157,8 @@
 </main>
 <script>
 let board = {meta:{}, rows:[]};
+let historyDates = [];
+let viewDate = "";
 let prefix = "all";
 let hotOnly = false;
 let soeOnly = false;
@@ -622,12 +630,19 @@ async function showPublishedDetail(row) {
   revealChart();
   chartBars = [];
   try {
-    const res = await fetch("bars/" + encodeURIComponent(row.code) + ".json");
-    if (res.ok) chartBars = await res.json();
+    if (localTool) {
+      const res = await fetch("/api/stock?code=" + encodeURIComponent(row.code));
+      const data = await res.json();
+      if (data && data.ok) chartBars = data.bars || [];
+    } else {
+      const res = await fetch("bars/" + encodeURIComponent(row.code) + ".json");
+      if (res.ok) chartBars = await res.json();
+    }
   } catch (e) {}
+  chartBars = barsAsOf(chartBars, viewDate || row.date);
   if (!chartBars.length) {
     const capEl = document.getElementById("kline-cap");
-    if (capEl) capEl.textContent = "这只股票的日K还没发布。";
+    if (capEl) capEl.textContent = localTool ? "这只股票的日K没有读出来。" : "这只股票的日K还没发布。";
     return;
   }
   chartSpan = 110;
@@ -639,7 +654,7 @@ async function showPublishedDetail(row) {
 async function openDetail(code, name) {
   selected = code;
   renderList();
-  if (!localTool) {
+  if (!localTool || !viewingLatest()) {
     const row = board.rows.find(r => r.code === code);
     if (!row) { detailEl.innerHTML = `<p>没有数据</p>`; return; }
     await showPublishedDetail(row);
@@ -700,6 +715,66 @@ document.getElementById("soebtn").onclick = () => {
   document.getElementById("soebtn").classList.add("active");
   renderList();
 };
+function dateLabel(day) {
+  const parts = String(day || "").split("-");
+  if (parts.length !== 3) return day || "—";
+  return `${Number(parts[1])}月${Number(parts[2])}日`;
+}
+function viewingLatest() {
+  return !viewDate || !historyDates.length || viewDate === historyDates[0];
+}
+function barsAsOf(bars, day) {
+  if (!day || !Array.isArray(bars)) return bars || [];
+  const cut = bars.filter(bar => String(bar.date || "").slice(0, 10) <= day);
+  return cut.length ? cut : bars;
+}
+function clearDetail() {
+  selected = "";
+  detailEl.innerHTML = `<div class="placeholder"><p class="ph-title">选择一只股票</p><p class="muted">点左侧列表，这里显示命中规则和最近日K。</p></div>`;
+  const layout = document.querySelector(".layout");
+  if (layout) layout.classList.remove("picked");
+}
+function renderDates() {
+  const bar = document.getElementById("dateBar");
+  const seg = document.getElementById("dateSeg");
+  if (!bar || !seg) return;
+  if (!historyDates.length) { bar.hidden = true; return; }
+  bar.hidden = false;
+  seg.innerHTML = historyDates.map(day => `<button type="button" data-date="${day}" class="${day === viewDate ? "active" : ""}">${dateLabel(day)}</button>`).join("");
+  seg.querySelectorAll("button").forEach(btn => btn.onclick = () => selectDate(btn.dataset.date));
+}
+function rememberDates(data) {
+  const dates = data && data.meta && Array.isArray(data.meta.dates) ? data.meta.dates.filter(Boolean) : [];
+  if (dates.length) historyDates = dates;
+  else if (data && data.meta && data.meta.asof && !historyDates.length) historyDates = [data.meta.asof];
+}
+async function selectDate(day) {
+  if (!day || day === viewDate) return;
+  viewDate = day;
+  clearDetail();
+  renderDates();
+  let data = null;
+  try {
+    if (localTool) {
+      const res = await fetch("/api/list?date=" + encodeURIComponent(day));
+      if (res.ok) data = await res.json();
+    } else if (historyDates[0] && day === historyDates[0]) {
+      const res = await fetch("results.json", {cache: "no-store"});
+      if (res.ok) data = await res.json();
+    } else {
+      const res = await fetch("history/" + encodeURIComponent(day) + ".json", {cache: "no-store"});
+      if (res.ok) data = await res.json();
+    }
+  } catch (e) {}
+  if (viewDate !== day || !data || !Array.isArray(data.rows)) return;
+  board = data;
+  applyMeta(data);
+  renderList();
+  if (!localTool) {
+    const first = board.rows[0];
+    if (first) openDetail(first.code, first.name);
+  }
+}
 function applyMeta(data) {
   const m = data.meta || {};
   const c = m.counts || {};
@@ -728,7 +803,10 @@ async function pollRefresh() {
   if (!s.finished) { msg.textContent = ""; return; }
   const data = await fetch("/api/list").then(r => r.json());
   board = data;
+  rememberDates(data);
+  viewDate = (data.meta && data.meta.asof) || historyDates[0] || "";
   applyMeta(data);
+  renderDates();
   renderList();
   msg.textContent = `已按因子更新，信号日 ${s.asof || "—"}，入选 ${data.rows.length} 只`;
   if ((data.rows || []).some(r => !Number(r.total_mv) || !Number(r.float_mv))) {
@@ -738,7 +816,9 @@ async function pollRefresh() {
         const again = await fetch("/api/list").then(r => r.json());
         if (!again || !Array.isArray(again.rows) || !again.rows.length) return;
         board = again;
+        rememberDates(again);
         applyMeta(again);
+        renderDates();
         renderList();
       } catch (e) {}
     };
@@ -785,7 +865,19 @@ async function boot() {
     document.getElementById("refreshMsg").textContent = "这是已发布的结果。重新拉取请在电脑打开 127.0.0.1:8771 ，拉完后再发布一次。";
   }
   board = data;
+  rememberDates(data);
+  if (!localTool && historyDates.length < 2) {
+    try {
+      const idxRes = await fetch("history/index.json", {cache: "no-store"});
+      if (idxRes.ok) {
+        const idx = await idxRes.json();
+        if (idx && Array.isArray(idx.dates) && idx.dates.length) historyDates = idx.dates;
+      }
+    } catch (e) {}
+  }
+  viewDate = (data.meta && data.meta.asof) || historyDates[0] || "";
   applyMeta(data);
+  renderDates();
   document.getElementById("hotbtn").textContent = "高度吻合";
   renderList();
   if (localTool && (board.rows || []).some(r => !Number(r.total_mv) || !Number(r.float_mv))) {
@@ -795,7 +887,9 @@ async function boot() {
         const again = await fetch("/api/list").then(r => r.json());
         if (!again || !Array.isArray(again.rows) || !again.rows.length) return;
         board = again;
+        rememberDates(again);
         applyMeta(again);
+        renderDates();
         renderList();
       } catch (e) {}
     };
