@@ -143,6 +143,7 @@
       <button class="tab active" data-prefix="all">全部</button>
       <button class="tab" data-prefix="6">沪A</button>
       <button class="tab" data-prefix="0">深A主板</button>
+      <button class="tab" id="sectorBtn" data-prefix="sector" type="button" hidden>行业</button>
     </div>
     <button class="hotbtn" id="hotbtn" type="button">高度吻合</button>
     <button class="hotbtn" id="soebtn" type="button">注入重组国资</button>
@@ -160,6 +161,8 @@ let board = {meta:{}, rows:[]};
 let historyDates = [];
 let viewDate = "";
 let prefix = "all";
+let sectorOnly = false;
+let topSectorName = "";
 let hotOnly = false;
 let soeOnly = false;
 const soeDeals = {
@@ -192,15 +195,40 @@ function shown() {
     if (r.st || name.toUpperCase().includes("ST") || name.includes("退")) return false;
     if (soeOnly) return !!soeDeals[r.code];
     if (hotOnly) return coreTags(r).length >= 2;
+    if (sectorOnly) return String(r.sector || "") === topSectorName;
     return prefix === "all" || r.prefix === prefix;
   }).slice().sort((a, b) => b.score - a.score || a.code.localeCompare(b.code));
 }
 function coreTags(r) {
   return (r.tags || []).filter(t => t !== "大级别向上");
 }
+function sectorLabel(name) {
+  return String(name || "").replace(/[ⅠⅡⅢⅣⅤ]+$/u, "");
+}
+function pickTopSector(rows) {
+  const bucket = {};
+  (rows || []).forEach(r => {
+    const name = String(r.sector || "").trim();
+    if (!name) return;
+    const item = bucket[name] || (bucket[name] = {n: 0, score: 0});
+    item.n += 1;
+    item.score += Number(r.score) || 0;
+  });
+  return Object.keys(bucket).sort((a, b) => bucket[b].n - bucket[a].n || bucket[b].score - bucket[a].score || a.localeCompare(b, "zh"))[0] || "";
+}
+function renderSector() {
+  topSectorName = pickTopSector(board.rows);
+  const btn = document.getElementById("sectorBtn");
+  if (!btn) return;
+  if (!topSectorName) { btn.hidden = true; return; }
+  btn.hidden = false;
+  btn.textContent = sectorLabel(topSectorName);
+  btn.title = "这一天入选里最集中的行业";
+}
 function renderList() {
+  renderSector();
   const rows = shown();
-  const scope = soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : "当前";
+  const scope = soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : sectorOnly ? sectorLabel(topSectorName) : "当前";
   countEl.textContent = `${scope} ${rows.length} 只`;
   listEl.innerHTML = rows.map(r => {
     const pct = Number(r.pct);
@@ -213,11 +241,11 @@ function renderList() {
     return `<button class="card ${r.code === selected ? "selected" : ""}" data-code="${r.code}">
       <div class="row1"><span class="id"><span class="code">${r.code}</span><span class="name">${esc(r.name)}</span>${dayMark(r.days)}<span class="score ${scoreCls}">${Number(r.score).toFixed(1)}</span>${st}</span></div>
       <div class="muted capline">总市值 ${capText(r.total_mv)} · 流通市值 ${capText(r.float_mv)}</div>
-      <div class="row2"><span class="muted">${esc(r.board)} · ${Number(r.price).toFixed(2)}</span><span class="${cls}">${sign}${pct.toFixed(2)}%</span></div>
+      <div class="row2"><span class="muted">${esc([r.board, sectorLabel(r.sector)].filter(Boolean).join(" · "))} · ${Number(r.price).toFixed(2)}</span><span class="${cls}">${sign}${pct.toFixed(2)}%</span></div>
       <div class="tags">${tags}</div>
       ${soeNote}
     </button>`;
-  }).join("") || `<p class="empty">${soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
+  }).join("") || `<p class="empty">${soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
   listEl.querySelectorAll(".card").forEach(btn => btn.onclick = () => {
     const row = board.rows.find(r => r.code === btn.dataset.code);
     openDetail(btn.dataset.code, row ? row.name : btn.dataset.code);
@@ -695,15 +723,31 @@ function setBoard(nextPrefix) {
   prefix = nextPrefix;
   hotOnly = false;
   soeOnly = false;
+  sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   const picked = document.querySelector(`.tab[data-prefix="${nextPrefix}"]`);
   if (picked) picked.classList.add("active");
   renderList();
 }
-document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => setBoard(btn.dataset.prefix));
+function selectSector() {
+  if (!topSectorName) return;
+  sectorOnly = true;
+  hotOnly = false;
+  soeOnly = false;
+  prefix = "all";
+  document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
+  const btn = document.getElementById("sectorBtn");
+  if (btn) btn.classList.add("active");
+  renderList();
+}
+document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => {
+  if (btn.dataset.prefix === "sector") selectSector();
+  else setBoard(btn.dataset.prefix);
+});
 document.getElementById("hotbtn").onclick = () => {
   hotOnly = true;
   soeOnly = false;
+  sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("hotbtn").classList.add("active");
   renderList();
@@ -711,6 +755,7 @@ document.getElementById("hotbtn").onclick = () => {
 document.getElementById("soebtn").onclick = () => {
   soeOnly = true;
   hotOnly = false;
+  sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("soebtn").classList.add("active");
   renderList();
