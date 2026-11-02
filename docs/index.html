@@ -116,6 +116,7 @@
   .flag.on .state { background:#ecfdf3; color:#166534; }
   .flag.off .state { background:#f5f5f4; color:#a8a29e; }
   .empty { color:var(--muted); padding:20px 4px; }
+  .cbhead { margin:14px 2px 6px; font-size:12px; }
   @media (max-width:700px) {
     header, main { padding-left:14px; padding-right:14px; }
     .metrics { grid-template-columns:repeat(2, minmax(0,1fr)); }
@@ -154,6 +155,7 @@
     <button class="hotbtn" id="soebtn" type="button">注入重组国资</button>
     <button class="hotbtn" id="shelfbtn" type="button">地量回平台</button>
     <button class="hotbtn" id="newsbtn" type="button">三日大利好</button>
+    <button class="hotbtn" id="cbbtn" type="button">可转债博弈</button>
   </div>
   <div class="layout">
     <section>
@@ -176,6 +178,9 @@ let shelfOnly = false;
 let shelfRows = [];
 let newsOnly = false;
 let newsRows = [];
+let cbOnly = false;
+let cbRows = [];
+let cbMeta = {};
 const soeDeals = {
   "600156": "国资，重组审核中。控股股东兴湘集团，实控人湖南省国资委。拟购买易信科技 97.40%。",
   "002827": "国资。实控人西藏自治区国资委，控股股东所持股份拟无偿划转。",
@@ -200,17 +205,18 @@ const countEl = document.getElementById("count");
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function shown() {
-  const source = newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
+  const source = cbOnly ? cbRows : newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
   const rows = source.filter(r => {
     const name = String(r.name || "");
-    if (String(r.code || "").startsWith("3")) return false;
+    if (!cbOnly && String(r.code || "").startsWith("3")) return false;
     if (r.st || name.toUpperCase().includes("ST") || name.includes("退")) return false;
-    if (newsOnly || shelfOnly) return true;
+    if (cbOnly || newsOnly || shelfOnly) return true;
     if (soeOnly) return !!soeDeals[r.code];
     if (hotOnly) return coreTags(r).length >= 2;
     if (sectorOnly) return String(r.sector || "") === topSectorName;
     return prefix === "all" || r.prefix === prefix;
   });
+  if (cbOnly) return rows.slice();
   if (newsOnly) {
     return rows.slice().sort((a, b) => Number(b.soe) - Number(a.soe) || String(b.news_date).localeCompare(String(a.news_date)) || a.code.localeCompare(b.code));
   }
@@ -245,9 +251,25 @@ function renderSector() {
 function renderList() {
   renderSector();
   const rows = shown();
-  const scope = newsOnly ? "三日大利好" : shelfOnly ? "地量回平台" : soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : sectorOnly ? sectorLabel(topSectorName) : "当前";
-  countEl.textContent = `${scope} ${rows.length} 只`;
+  const scope = cbOnly ? "可转债博弈" : newsOnly ? "三日大利好" : shelfOnly ? "地量回平台" : soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : sectorOnly ? sectorLabel(topSectorName) : "当前";
+  const cbNote = cbOnly ? ` · 六条都过 ${cbMeta.picked || 0} · 只差一条 ${cbMeta.near || 0}` : "";
+  countEl.textContent = `${scope} ${rows.length} 只${cbNote}`;
+  let lastGroup = "";
   listEl.innerHTML = rows.map(r => {
+    if (cbOnly) {
+      const pct = Number(r.pct);
+      const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
+      const sign = pct > 0 ? "+" : "";
+      const head = r.group !== lastGroup ? `<p class="muted cbhead">${esc(r.group)}</p>` : "";
+      lastGroup = r.group;
+      const miss = r.miss ? `${esc(r.miss)}不过` : "六条都过";
+      return `${head}<button class="card ${r.key === selected ? "selected" : ""}" data-bond="${esc(r.key)}">
+        <div class="row1"><span class="id"><span class="name">${esc(r.bond_name)}</span><span class="code">${esc(r.name)}</span></span></div>
+        <div class="muted capline">${esc(r.code)} · ${esc(r.board)} · 转股价 ${Number(r.convert_price).toFixed(2)} · 还剩 ${cbMonths(r.years)}</div>
+        <div class="row2"><span class="muted">${Number(r.price).toFixed(2)}</span><span class="${cls}">${sign}${pct.toFixed(2)}%</span></div>
+        <div class="tags"><span class="tag">${miss}</span></div>
+      </button>`;
+    }
     const pct = Number(r.pct);
     const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
     const sign = pct > 0 ? "+" : "";
@@ -265,12 +287,79 @@ function renderList() {
       <div class="tags">${tags}</div>
       ${soeNote}
     </button>`;
-  }).join("") || `<p class="empty">${newsOnly ? "这三天没有筛出来的大利好。" : shelfOnly ? "现在没有还停在阳线脚下的股票。" : soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
+  }).join("") || `<p class="empty">${cbOnly ? "这次没有筛进可转债博弈的正股。" : newsOnly ? "这三天没有筛出来的大利好。" : shelfOnly ? "现在没有还停在阳线脚下的股票。" : soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
+  const missLine = cbOnly && (cbMeta.missing || []).length ? `<p class="muted cbhead">文章里的${esc((cbMeta.missing || []).join("、"))}已经不在存续转债里。</p>` : "";
+  if (missLine) listEl.insertAdjacentHTML("beforeend", missLine);
   listEl.querySelectorAll(".card").forEach(btn => btn.onclick = () => {
+    if (cbOnly) {
+      const row = cbRows.find(r => r.key === btn.dataset.bond);
+      if (row) showCbDetail(row);
+      return;
+    }
     const pool = newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
     const row = pool.find(r => r.code === btn.dataset.code);
     openDetail(btn.dataset.code, row ? row.name : btn.dataset.code);
   });
+}
+function cbMonths(years) {
+  const n = Number(years);
+  if (!Number.isFinite(n)) return "—";
+  return (n * 12).toFixed(1) + "个月";
+}
+function cbGap(gap) {
+  const v = Number(gap) * 100;
+  if (!Number.isFinite(v)) return "—";
+  return (v < 0 ? "低 " : "高 ") + Math.abs(v).toFixed(1) + "%";
+}
+function cbUp(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return (v * 100).toFixed(1) + "%";
+}
+function yiText(n) {
+  const v = Number(n);
+  if (!Number.isFinite(v)) return "—";
+  return v.toFixed(2) + "亿";
+}
+async function showCbDetail(row) {
+  selected = row.key;
+  renderList();
+  const pct = Number(row.pct);
+  const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
+  const sign = pct > 0 ? "+" : "";
+  const flags = (row.factors || []).map(f => `<div class="flag ${f.pass ? "on" : "off"}"><div class="flag-h"><b>${esc(f.name)}</b><span class="state">${f.pass ? "过" : "不过"}</span></div><div class="muted">${esc(f.text)}</div></div>`).join("");
+  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.bond_name)}</span><span>${esc(row.name || "")}</span></div><p class="muted capline">${esc(row.code)} · ${esc(row.board)} · ${esc(row.bond_code)}</p><p class="muted">${esc(cbMeta.asof || "")}<span class="pill yes">可转债博弈</span></p></div></div>
+    <div class="metrics">
+      <div><span>正股</span><b>${Number(row.price).toFixed(2)}</b></div>
+      <div><span>涨跌</span><b class="${cls}">${sign}${pct.toFixed(2)}%</b></div>
+      <div><span>转股价</span><b>${Number(row.convert_price).toFixed(2)}</b></div>
+      <div><span>到强赎</span><b>${cbUp(row.upside)}</b></div>
+    </div>
+    <p class="muted">相对转股价 ${cbGap(row.gap)} · 转债 ${row.bond_price == null ? "—" : Number(row.bond_price).toFixed(3)} · 现金 ${yiText(row.cash_yi)} / 兑付 ${yiText(row.need_yi)} · 下修 ${row.adj_count || 0} 次${row.last_adj ? "，最近 " + esc(row.last_adj) : ""} · ${esc(row.expire || "—")} 到期</p>
+    <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div><div class="kzoom"><button type="button" id="kzoom-in" aria-label="放大">+</button><button type="button" id="kzoom-out" aria-label="缩小">−</button></div></div>
+    <div id="kline-cap" class="muted kline-cap">正在读取日K…</div>
+    <h2 class="block-title">六条</h2>${flags}
+    <p class="muted">这是强赎博弈的筛选，不是买卖建议。</p>`;
+  revealChart();
+  chartBars = [];
+  try {
+    const url = localTool ? "/api/cb-bars?code=" + encodeURIComponent(row.code) : "bars/" + encodeURIComponent(row.code) + ".json";
+    const res = await fetch(url);
+    if (res.ok) {
+      const data = await res.json();
+      chartBars = Array.isArray(data) ? data : (data.bars || []);
+    }
+  } catch (e) {}
+  if (!chartBars.length) {
+    const capEl = document.getElementById("kline-cap");
+    if (capEl) capEl.textContent = "这只正股的日K这次没读出来。";
+    return;
+  }
+  chartSpan = 110;
+  chartStart = Math.max(0, chartBars.length - chartSpan);
+  paintChart();
+  bindKline();
+  revealChart();
 }
 function dayMark(days) {
   const n = Number(days) || 0;
@@ -774,11 +863,13 @@ async function openDetail(code, name) {
   revealChart();
 }
 function setBoard(nextPrefix) {
+  if (cbOnly) clearDetail();
   prefix = nextPrefix;
   hotOnly = false;
   soeOnly = false;
   shelfOnly = false;
   newsOnly = false;
+  cbOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   const picked = document.querySelector(`.tab[data-prefix="${nextPrefix}"]`);
@@ -787,11 +878,13 @@ function setBoard(nextPrefix) {
 }
 function selectSector() {
   if (!topSectorName) return;
+  if (cbOnly) clearDetail();
   sectorOnly = true;
   hotOnly = false;
   soeOnly = false;
   shelfOnly = false;
   newsOnly = false;
+  cbOnly = false;
   prefix = "all";
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   const btn = document.getElementById("sectorBtn");
@@ -803,43 +896,63 @@ document.querySelectorAll(".tab").forEach(btn => btn.onclick = () => {
   else setBoard(btn.dataset.prefix);
 });
 document.getElementById("hotbtn").onclick = () => {
+  if (cbOnly) clearDetail();
   hotOnly = true;
   soeOnly = false;
   shelfOnly = false;
   newsOnly = false;
+  cbOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("hotbtn").classList.add("active");
   renderList();
 };
 document.getElementById("soebtn").onclick = () => {
+  if (cbOnly) clearDetail();
   soeOnly = true;
   hotOnly = false;
   shelfOnly = false;
   newsOnly = false;
+  cbOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("soebtn").classList.add("active");
   renderList();
 };
 document.getElementById("shelfbtn").onclick = () => {
+  if (cbOnly) clearDetail();
   shelfOnly = true;
   soeOnly = false;
   hotOnly = false;
   newsOnly = false;
+  cbOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("shelfbtn").classList.add("active");
   renderList();
 };
 document.getElementById("newsbtn").onclick = () => {
+  if (cbOnly) clearDetail();
   newsOnly = true;
+  shelfOnly = false;
+  soeOnly = false;
+  hotOnly = false;
+  cbOnly = false;
+  sectorOnly = false;
+  document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
+  document.getElementById("newsbtn").classList.add("active");
+  renderList();
+};
+document.getElementById("cbbtn").onclick = () => {
+  cbOnly = true;
+  newsOnly = false;
   shelfOnly = false;
   soeOnly = false;
   hotOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
-  document.getElementById("newsbtn").classList.add("active");
+  document.getElementById("cbbtn").classList.add("active");
+  clearDetail();
   renderList();
 };
 function dateLabel(day) {
@@ -878,13 +991,16 @@ function rememberDates(data) {
 async function selectDate(day) {
   if (!day || day === viewDate) return;
   viewDate = day;
-  if ((shelfOnly || newsOnly) && historyDates.length && day !== historyDates[0]) {
+  if ((shelfOnly || newsOnly || cbOnly) && historyDates.length && day !== historyDates[0]) {
     shelfOnly = false;
     newsOnly = false;
+    cbOnly = false;
     const shelfBtn = document.getElementById("shelfbtn");
     const newsBtn = document.getElementById("newsbtn");
+    const cbBtn = document.getElementById("cbbtn");
     if (shelfBtn) shelfBtn.classList.remove("active");
     if (newsBtn) newsBtn.classList.remove("active");
+    if (cbBtn) cbBtn.classList.remove("active");
     const all = document.querySelector('.tab[data-prefix="all"]');
     if (all) all.classList.add("active");
     prefix = "all";
@@ -1016,6 +1132,14 @@ async function boot() {
     if (newsRes.ok) {
       const news = await newsRes.json();
       if (news && Array.isArray(news.rows)) newsRows = news.rows;
+    }
+  } catch (e) {}
+  try {
+    const cbRes = await fetch(localTool ? "/cb.json" : "cb.json", {cache: "no-store"});
+    if (cbRes.ok) {
+      const cb = await cbRes.json();
+      if (cb && Array.isArray(cb.rows)) cbRows = cb.rows;
+      if (cb && cb.meta) cbMeta = cb.meta;
     }
   } catch (e) {}
   if (!localTool && historyDates.length < 2) {
