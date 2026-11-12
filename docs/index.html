@@ -156,6 +156,7 @@
     <button class="hotbtn" id="shelfbtn" type="button">地量回平台</button>
     <button class="hotbtn" id="newsbtn" type="button">三日大利好</button>
     <button class="hotbtn" id="cbbtn" type="button">可转债博弈</button>
+    <button class="hotbtn" id="burstbtn" type="button">爆发同形</button>
   </div>
   <div class="layout">
     <section>
@@ -181,6 +182,9 @@ let newsRows = [];
 let cbOnly = false;
 let cbRows = [];
 let cbMeta = {};
+let burstOnly = false;
+let burstRows = [];
+let burstMeta = {};
 const soeDeals = {
   "600156": "国资，重组审核中。控股股东兴湘集团，实控人湖南省国资委。拟购买易信科技 97.40%。",
   "002827": "国资。实控人西藏自治区国资委，控股股东所持股份拟无偿划转。",
@@ -205,18 +209,19 @@ const countEl = document.getElementById("count");
 
 function esc(s) { return String(s ?? "").replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
 function shown() {
-  const source = cbOnly ? cbRows : newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
+  const source = cbOnly ? cbRows : burstOnly ? burstRows : newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
   const rows = source.filter(r => {
     const name = String(r.name || "");
     if (!cbOnly && String(r.code || "").startsWith("3")) return false;
     if (r.st || name.toUpperCase().includes("ST") || name.includes("退")) return false;
-    if (cbOnly || newsOnly || shelfOnly) return true;
+    if (cbOnly || burstOnly || newsOnly || shelfOnly) return true;
     if (soeOnly) return !!soeDeals[r.code];
     if (hotOnly) return coreTags(r).length >= 2;
     if (sectorOnly) return String(r.sector || "") === topSectorName;
     return prefix === "all" || r.prefix === prefix;
   });
   if (cbOnly) return rows.slice();
+  if (burstOnly) return rows.slice().sort((a, b) => (Number(a.group_order) - Number(b.group_order)) || b.score - a.score || a.code.localeCompare(b.code));
   if (newsOnly) {
     return rows.slice().sort((a, b) => Number(b.soe) - Number(a.soe) || String(b.news_date).localeCompare(String(a.news_date)) || a.code.localeCompare(b.code));
   }
@@ -251,8 +256,8 @@ function renderSector() {
 function renderList() {
   renderSector();
   const rows = shown();
-  const scope = cbOnly ? "可转债博弈" : newsOnly ? "三日大利好" : shelfOnly ? "地量回平台" : soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : sectorOnly ? sectorLabel(topSectorName) : "当前";
-  const cbNote = cbOnly ? ` · 六条都过 ${cbMeta.picked || 0} · 只差一条 ${cbMeta.near || 0}` : "";
+  const scope = cbOnly ? "可转债博弈" : burstOnly ? "爆发同形" : newsOnly ? "三日大利好" : shelfOnly ? "地量回平台" : soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : sectorOnly ? sectorLabel(topSectorName) : "当前";
+  const cbNote = cbOnly ? ` · 六条都过 ${cbMeta.picked || 0} · 只差一条 ${cbMeta.near || 0}` : burstOnly ? " · 按量能接近程度排" : "";
   countEl.textContent = `${scope} ${rows.length} 只${cbNote}`;
   let lastGroup = "";
   listEl.innerHTML = rows.map(r => {
@@ -274,20 +279,22 @@ function renderList() {
     const cls = pct > 0 ? "up" : pct < 0 ? "down" : "";
     const sign = pct > 0 ? "+" : "";
     const tags = (r.tags || []).map(t => `<span class="tag${t === "国资" ? " soetag" : ""}">${esc(t)}</span>`).join("");
-    const noteText = r.news_note || r.shelf_note || soeDeals[r.code] || "";
+    const noteText = r.news_note || r.shelf_note || r.burst_note || soeDeals[r.code] || "";
     const soeNote = noteText ? `<div class="muted soe-note">${esc(noteText)}</div>` : "";
     const st = r.st ? `<span class="st">风险</span>` : "";
     const scoreCls = Number(r.score) >= 30 ? "hi" : Number(r.score) >= 22 ? "mid" : "lo";
-    const scoreHtml = (r.shelf_note || r.news_note) ? "" : `<span class="score ${scoreCls}">${Number(r.score).toFixed(1)}</span>`;
+    const scoreHtml = (r.shelf_note || r.news_note || r.burst_note) ? "" : `<span class="score ${scoreCls}">${Number(r.score).toFixed(1)}</span>`;
     const hit = r.soe ? " soehit" : "";
-    return `<button class="card${hit} ${r.code === selected ? "selected" : ""}" data-code="${r.code}">
-      <div class="row1"><span class="id"><span class="code">${r.code}</span><span class="name">${esc(r.name)}</span>${dayMark(r.days)}${scoreHtml}${st}</span></div>
+    const burstHead = burstOnly && r.group !== lastGroup ? `<p class="muted cbhead">${esc(r.group)}</p>` : "";
+    if (burstOnly) lastGroup = r.group || "";
+    return `${burstHead}<button class="card${hit} ${r.code === selected ? "selected" : ""}" data-code="${r.code}">
+      <div class="row1"><span class="id"><span class="code">${r.code}</span><span class="name">${esc(r.name)}</span>${dayMark(r)}${scoreHtml}${st}</span></div>
       <div class="muted capline">总市值 ${capText(r.total_mv)} · 流通市值 ${capText(r.float_mv)}</div>
       <div class="row2"><span class="muted">${esc([r.board, sectorLabel(r.sector)].filter(Boolean).join(" · "))} · ${Number(r.price).toFixed(2)}</span><span class="${cls}">${sign}${pct.toFixed(2)}%</span></div>
       <div class="tags">${tags}</div>
       ${soeNote}
     </button>`;
-  }).join("") || `<p class="empty">${cbOnly ? "这次没有筛进可转债博弈的正股。" : newsOnly ? "这三天没有筛出来的大利好。" : shelfOnly ? "现在没有还停在阳线脚下的股票。" : soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
+  }).join("") || `<p class="empty">${cbOnly ? "这次没有筛进可转债博弈的正股。" : burstOnly ? "这段没有对上这两个图形的股票。" : newsOnly ? "这三天没有筛出来的大利好。" : shelfOnly ? "现在没有还停在阳线脚下的股票。" : soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
   const missLine = cbOnly && (cbMeta.missing || []).length ? `<p class="muted cbhead">文章里的${esc((cbMeta.missing || []).join("、"))}已经不在存续转债里。</p>` : "";
   if (missLine) listEl.insertAdjacentHTML("beforeend", missLine);
   listEl.querySelectorAll(".card").forEach(btn => btn.onclick = () => {
@@ -296,7 +303,7 @@ function renderList() {
       if (row) showCbDetail(row);
       return;
     }
-    const pool = newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
+    const pool = burstOnly ? burstRows : newsOnly ? newsRows : shelfOnly ? shelfRows : board.rows;
     const row = pool.find(r => r.code === btn.dataset.code);
     openDetail(btn.dataset.code, row ? row.name : btn.dataset.code);
   });
@@ -361,10 +368,18 @@ async function showCbDetail(row) {
   bindKline();
   revealChart();
 }
-function dayMark(days) {
-  const n = Number(days) || 0;
+function dayMark(days, nos) {
+  let n = days;
+  let marks = nos;
+  if (days && typeof days === "object") {
+    n = days.days;
+    marks = days.day_nos;
+  }
+  n = Number(n) || 0;
   if (n < 2) return "";
-  return `<span class="days">${Math.min(n, 10)}天</span>`;
+  const shown = (Array.isArray(marks) ? marks : []).map(x => Number(x)).filter(x => x > 0);
+  const tail = shown.length ? " " + shown.join(" ") : "";
+  return `<span class="days">${Math.min(n, 10)}天${tail}</span>`;
 }
 function capText(n) {
   n = Number(n);
@@ -753,24 +768,27 @@ async function showPublishedDetail(row) {
   const tags = (row.tags || []).map(t => `<span class="tag${t === "国资" ? " soetag" : ""}">${esc(t)}</span>`).join("");
   const shelf = !!row.shelf_note;
   const news = !!row.news_note;
+  const burst = !!row.burst_note;
   const soe = news
     ? `<p class="${row.soe ? "soe-note soename" : "muted soe-note"}">${esc(row.news_note)}</p>`
+    : burst
+    ? `<p class="muted soe-note">${esc(row.burst_note)}</p>`
     : shelf
     ? `<p class="muted soe-note">${esc(row.shelf_note)}</p>`
     : (soeDeals[row.code] ? `<p class="muted soe-note">${esc(soeDeals[row.code])}</p>` : "");
   const cap = `<p class="muted capline">总市值 ${capText(row.total_mv)} · 流通市值 ${capText(row.float_mv)}</p>`;
-  const scoreHtml = (shelf || news) ? "" : `<span class="score ${scoreCls}">${Number(row.score).toFixed(1)}</span>`;
-  const pill = news ? (row.soe ? "国资" : "三日大利好") : shelf ? "地量回平台" : "符合入场";
+  const scoreHtml = (shelf || news || burst) ? "" : `<span class="score ${scoreCls}">${Number(row.score).toFixed(1)}</span>`;
+  const pill = news ? (row.soe ? "国资" : "三日大利好") : burst ? "爆发同形" : shelf ? "地量回平台" : "符合入场";
   const pillCls = news && row.soe ? "soe" : "yes";
-  const targetLabel = news ? "公告" : shelf ? "首板收盘" : "2:1 目标";
+  const targetLabel = news ? "公告" : burst ? "起涨前" : shelf ? "首板收盘" : "2:1 目标";
   const targetText = news ? dateLabel(row.news_date) : (row.target == null ? "—" : Number(row.target).toFixed(2));
   const stopText = news ? "—" : (row.stop == null ? "—" : Number(row.stop).toFixed(2));
   setFloatShares(row.float_mv, row.price);
-  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.code)}</span><span class="${news && row.soe ? "soename" : ""}">${esc(row.name || "")}</span>${dayMark(row.days)}${scoreHtml}</div>${cap}<p class="muted">${esc(row.date)}<span class="pill ${pillCls}">${pill}</span></p></div></div>
+  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(row.code)}</span><span class="${news && row.soe ? "soename" : ""}">${esc(row.name || "")}</span>${dayMark(row)}${scoreHtml}</div>${cap}<p class="muted">${esc(row.date)}<span class="pill ${pillCls}">${pill}</span></p></div></div>
     <div class="metrics">
       <div><span>收盘</span><b>${Number(row.price).toFixed(2)}</b></div>
       <div><span>涨跌</span><b class="${cls}">${sign}${pct.toFixed(2)}%</b></div>
-      <div><span>${news ? "参考价" : "止损参考"}</span><b>${stopText}</b></div>
+      <div><span>${news ? "参考价" : burst ? (Number(row.group_order) === 1 ? "最低" : "洗盘低点") : "止损参考"}</span><b>${stopText}</b></div>
       <div><span>${targetLabel}</span><b>${targetText}</b></div>
     </div>
     <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div><div class="kzoom"><button type="button" id="kzoom-in" aria-label="放大">+</button><button type="button" id="kzoom-out" aria-label="缩小">−</button></div></div>
@@ -805,23 +823,25 @@ async function openDetail(code, name) {
   selected = code;
   renderList();
   if (!localTool || !viewingLatest()) {
-    const row = (newsOnly && newsRows.find(r => r.code === code)) || (shelfOnly && shelfRows.find(r => r.code === code)) || board.rows.find(r => r.code === code);
+    const row = (burstOnly && burstRows.find(r => r.code === code)) || (newsOnly && newsRows.find(r => r.code === code)) || (shelfOnly && shelfRows.find(r => r.code === code)) || board.rows.find(r => r.code === code);
     if (!row) { detailEl.innerHTML = `<p>没有数据</p>`; return; }
     await showPublishedDetail(row);
     return;
   }
   const shelfRow = shelfRows.find(r => r.code === code);
   const newsRow = newsRows.find(r => r.code === code);
-  const known = board.rows.find(r => r.code === code) || shelfRow || newsRow;
+  const burstRow = burstRows.find(r => r.code === code);
+  const known = board.rows.find(r => r.code === code) || shelfRow || newsRow || burstRow;
   detailEl.innerHTML = known
-    ? `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(code)}</span><span>${esc(name || known.name || "")}</span>${dayMark(known.days)}</div><p class="muted capline">总市值 ${capText(known.total_mv)} · 流通市值 ${capText(known.float_mv)}</p><p class="muted">正在读取日K…</p></div></div>`
+    ? `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(code)}</span><span>${esc(name || known.name || "")}</span>${dayMark(known)}</div><p class="muted capline">总市值 ${capText(known.total_mv)} · 流通市值 ${capText(known.float_mv)}</p><p class="muted">正在读取日K…</p></div></div>`
     : `<p class="muted">正在读取 ${esc(code)} 的日K…</p>`;
   const res = await fetch("/api/stock?code=" + encodeURIComponent(code));
   const data = await res.json();
   if (!data.ok) { detailEl.innerHTML = `<p>${esc(data.error || "没有数据")}</p>`; return; }
   const useShelf = shelfOnly && shelfRow;
   const useNews = newsOnly && newsRow;
-  const picked = useNews ? newsRow : useShelf ? shelfRow : null;
+  const useBurst = burstOnly && burstRow;
+  const picked = useNews ? newsRow : useBurst ? burstRow : useShelf ? shelfRow : null;
   const totalMv = picked && Number(picked.total_mv) ? picked.total_mv : data.total_mv;
   const floatMv = picked && Number(picked.float_mv) ? picked.float_mv : data.float_mv;
   setFloatShares(floatMv, data.price);
@@ -830,26 +850,30 @@ async function openDetail(code, name) {
   const sign = pct > 0 ? "+" : "";
   const scoreCls = Number(data.score) >= 30 ? "hi" : Number(data.score) >= 22 ? "mid" : "lo";
   const flags = (data.flags || []).slice().sort((a, b) => Number(b.on) - Number(a.on)).map(f => `<div class="flag ${f.on ? "on" : "off"}"><div class="flag-h"><b>${esc(f.label)}</b><span class="state">${f.on ? "命中" : "未中"}</span></div><div class="muted">${esc(f.text)}</div></div>`).join("");
-  const stop = useNews ? null : useShelf ? shelfRow.stop : data.stop;
-  const target = useNews ? null : useShelf ? shelfRow.target : data.target;
-  const targetLabel = useNews ? "公告" : useShelf ? "首板收盘" : "2:1 目标";
+  const stop = useNews ? null : useBurst ? burstRow.stop : useShelf ? shelfRow.stop : data.stop;
+  const target = useNews ? null : useBurst ? burstRow.target : useShelf ? shelfRow.target : data.target;
+  const targetLabel = useNews ? "公告" : useBurst ? "起涨前" : useShelf ? "首板收盘" : "2:1 目标";
   const targetText = useNews ? dateLabel(newsRow.news_date) : (target == null ? "—" : Number(target).toFixed(2));
-  const scoreHtml = (useShelf || useNews) ? "" : `<span class="score ${scoreCls}">${Number(data.score).toFixed(1)}</span>`;
+  const scoreHtml = (useShelf || useNews || useBurst) ? "" : `<span class="score ${scoreCls}">${Number(data.score).toFixed(1)}</span>`;
   const pill = useNews
     ? `<span class="pill ${newsRow.soe ? "soe" : "yes"}">${newsRow.soe ? "国资" : "三日大利好"}</span>`
+    : useBurst
+    ? `<span class="pill yes">爆发同形</span>`
     : useShelf
     ? `<span class="pill yes">地量回平台</span>`
     : `<span class="pill ${data.entry ? "yes" : "no"}">${data.entry ? "符合入场" : "不符合入场"}</span>`;
   const below = useNews
     ? `<h2 class="block-title">${newsRow.soe ? "国资" : "三日大利好"}</h2><p class="${newsRow.soe ? "soe-note soename" : "muted"}">${esc(newsRow.news_note)}</p>`
+    : useBurst
+    ? `<h2 class="block-title">爆发同形</h2><p class="muted">${esc(burstRow.burst_note)}</p>`
     : useShelf
     ? `<h2 class="block-title">地量回平台</h2><p class="muted">${esc(shelfRow.shelf_note)}</p>`
     : `<h2 class="block-title">规则对照</h2>${flags}`;
-  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(data.code)}</span><span class="${useNews && newsRow.soe ? "soename" : ""}">${esc(name || "")}</span>${dayMark(data.days)}${scoreHtml}</div><p class="muted capline">总市值 ${capText(totalMv)} · 流通市值 ${capText(floatMv)}</p><p class="muted">${esc(data.date)}${pill}</p></div></div>
+  detailEl.innerHTML = `<div class="detail-head"><div><div class="detail-title"><span class="code">${esc(data.code)}</span><span class="${useNews && newsRow.soe ? "soename" : ""}">${esc(name || "")}</span>${dayMark(known)}${scoreHtml}</div><p class="muted capline">总市值 ${capText(totalMv)} · 流通市值 ${capText(floatMv)}</p><p class="muted">${esc(data.date)}${pill}</p></div></div>
     <div class="metrics">
       <div><span>收盘</span><b>${Number(data.price).toFixed(2)}</b></div>
       <div><span>涨跌</span><b class="${cls}">${sign}${pct.toFixed(2)}%</b></div>
-      <div><span>${useNews ? "来源" : "止损参考"}</span><b>${useNews ? "公司公告" : (stop == null ? "—" : Number(stop).toFixed(2))}</b></div>
+      <div><span>${useNews ? "来源" : useBurst ? (Number(burstRow.group_order) === 1 ? "最低" : "洗盘低点") : "止损参考"}</span><b>${useNews ? "公司公告" : (stop == null ? "—" : Number(stop).toFixed(2))}</b></div>
       <div><span>${targetLabel}</span><b>${targetText}</b></div>
     </div>
     <div class="kline-wrap"><svg id="kline-svg" class="kline" role="img" aria-label="日K和成交额"></svg><div id="kline-tip" class="kline-tip" hidden></div><div class="kzoom"><button type="button" id="kzoom-in" aria-label="放大">+</button><button type="button" id="kzoom-out" aria-label="缩小">−</button></div></div>
@@ -870,6 +894,7 @@ function setBoard(nextPrefix) {
   shelfOnly = false;
   newsOnly = false;
   cbOnly = false;
+  burstOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   const picked = document.querySelector(`.tab[data-prefix="${nextPrefix}"]`);
@@ -885,6 +910,7 @@ function selectSector() {
   shelfOnly = false;
   newsOnly = false;
   cbOnly = false;
+  burstOnly = false;
   prefix = "all";
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   const btn = document.getElementById("sectorBtn");
@@ -902,6 +928,7 @@ document.getElementById("hotbtn").onclick = () => {
   shelfOnly = false;
   newsOnly = false;
   cbOnly = false;
+  burstOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("hotbtn").classList.add("active");
@@ -914,6 +941,7 @@ document.getElementById("soebtn").onclick = () => {
   shelfOnly = false;
   newsOnly = false;
   cbOnly = false;
+  burstOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("soebtn").classList.add("active");
@@ -926,6 +954,7 @@ document.getElementById("shelfbtn").onclick = () => {
   hotOnly = false;
   newsOnly = false;
   cbOnly = false;
+  burstOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("shelfbtn").classList.add("active");
@@ -938,6 +967,7 @@ document.getElementById("newsbtn").onclick = () => {
   soeOnly = false;
   hotOnly = false;
   cbOnly = false;
+  burstOnly = false;
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("newsbtn").classList.add("active");
@@ -945,6 +975,7 @@ document.getElementById("newsbtn").onclick = () => {
 };
 document.getElementById("cbbtn").onclick = () => {
   cbOnly = true;
+  burstOnly = false;
   newsOnly = false;
   shelfOnly = false;
   soeOnly = false;
@@ -952,6 +983,20 @@ document.getElementById("cbbtn").onclick = () => {
   sectorOnly = false;
   document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
   document.getElementById("cbbtn").classList.add("active");
+  clearDetail();
+  renderList();
+};
+document.getElementById("burstbtn").onclick = () => {
+  if (cbOnly) clearDetail();
+  burstOnly = true;
+  cbOnly = false;
+  newsOnly = false;
+  shelfOnly = false;
+  soeOnly = false;
+  hotOnly = false;
+  sectorOnly = false;
+  document.querySelectorAll(".tab, .hotbtn").forEach(b => b.classList.remove("active"));
+  document.getElementById("burstbtn").classList.add("active");
   clearDetail();
   renderList();
 };
@@ -991,16 +1036,19 @@ function rememberDates(data) {
 async function selectDate(day) {
   if (!day || day === viewDate) return;
   viewDate = day;
-  if ((shelfOnly || newsOnly || cbOnly) && historyDates.length && day !== historyDates[0]) {
+  if ((shelfOnly || newsOnly || cbOnly || burstOnly) && historyDates.length && day !== historyDates[0]) {
     shelfOnly = false;
     newsOnly = false;
     cbOnly = false;
+    burstOnly = false;
     const shelfBtn = document.getElementById("shelfbtn");
     const newsBtn = document.getElementById("newsbtn");
     const cbBtn = document.getElementById("cbbtn");
+    const burstBtn = document.getElementById("burstbtn");
     if (shelfBtn) shelfBtn.classList.remove("active");
     if (newsBtn) newsBtn.classList.remove("active");
     if (cbBtn) cbBtn.classList.remove("active");
+    if (burstBtn) burstBtn.classList.remove("active");
     const all = document.querySelector('.tab[data-prefix="all"]');
     if (all) all.classList.add("active");
     prefix = "all";
@@ -1140,6 +1188,14 @@ async function boot() {
       const cb = await cbRes.json();
       if (cb && Array.isArray(cb.rows)) cbRows = cb.rows;
       if (cb && cb.meta) cbMeta = cb.meta;
+    }
+  } catch (e) {}
+  try {
+    const burstRes = await fetch(localTool ? "/burst.json" : "burst.json", {cache: "no-store"});
+    if (burstRes.ok) {
+      const burst = await burstRes.json();
+      if (burst && Array.isArray(burst.rows)) burstRows = burst.rows;
+      if (burst && burst.meta) burstMeta = burst.meta;
     }
   } catch (e) {}
   if (!localTool && historyDates.length < 2) {
