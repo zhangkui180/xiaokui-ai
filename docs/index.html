@@ -302,7 +302,7 @@ function renderList() {
       <div class="tags">${tags}</div>
       ${soeNote}
     </button>`;
-  }).join("") || `<p class="empty">${shortOnly ? "这次没有筛进短线新战法的股票。" : cbOnly ? "这次没有筛进可转债博弈的正股。" : burstOnly ? "这段没有对上这两个图形的股票。" : newsOnly ? "这三天没有筛出来的大利好。" : shelfOnly ? "现在没有还停在阳线脚下的股票。" : soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
+  }).join("") || `<p class="empty">${shortOnly ? "这次没有筛进短线新战法的股票。" : cbOnly ? "这次没有筛进可转债博弈的正股。" : burstOnly ? "这段没有对上这个图形的股票。" : newsOnly ? "这三天没有筛出来的大利好。" : shelfOnly ? "现在没有还停在阳线脚下的股票。" : soeOnly ? "这 70 只里没有注入、重组或国资大股东。" : hotOnly ? "没有高度吻合的股票。" : sectorOnly ? "这一天没有落在该行业的股票。" : "这一栏没有符合入场条件的股票。"}</p>`;
   const missLine = cbOnly && (cbMeta.missing || []).length ? `<p class="muted cbhead">文章里的${esc((cbMeta.missing || []).join("、"))}已经不在存续转债里。</p>` : "";
   if (missLine) listEl.insertAdjacentHTML("beforeend", missLine);
   listEl.querySelectorAll(".card").forEach(btn => btn.onclick = () => {
