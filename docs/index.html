@@ -261,7 +261,7 @@ function renderList() {
   renderSector();
   const rows = shown();
   const scope = shortOnly ? "短线新战法" : cbOnly ? "可转债博弈" : burstOnly ? "爆发同形" : newsOnly ? "三日大利好" : shelfOnly ? "地量回平台" : soeOnly ? "注入重组国资" : hotOnly ? "高度吻合" : sectorOnly ? sectorLabel(topSectorName) : "当前";
-  const cbNote = shortOnly ? "" : cbOnly ? ` · 六条都过 ${cbMeta.picked || 0} · 只差一条 ${cbMeta.near || 0}` : burstOnly ? " · 按量能接近程度排" : "";
+  const cbNote = shortOnly ? "" : cbOnly ? ` · 六条都过 ${cbMeta.picked || 0} · 只差一条 ${cbMeta.near || 0}` : burstOnly ? " · 按放量倍数排" : "";
   if (shortOnly) {
     countEl.innerHTML = `${scope} ${rows.length} 只 · ${esc(shortMeta.phase || "最新收盘")}<br>${esc(shortMeta.advice || shortMeta.text || "")}`;
   } else {
