@@ -1,1 +1,1 @@
-{"meta": {"asof": "", "count": 0}, "rows": []}
+{"meta": {"asof": "2026-11-23", "count": 1}, "rows": [{"code": "000591", "name": "太阳能", "board": "深A主板", "prefix": "0", "date": "2026-11-23", "price": 4.29, "pct": 2.63, "score": 4.8, "entry": true, "tags": ["地量回平台"], "stop": 4.13, "target": 4.59, "st": false, "total_mv": 16751823200.970001, "float_mv": 16745071491.72, "days": 1, "sector": "电力", "shelf_note": "11月3日从4.17拉到4.59，量约5倍，现价回到4.29"}]}
